@@ -339,7 +339,7 @@ func applyVocalMode(player: VLCMediaPlayer, mode: String) {
     if let trackNames = player.audioTrackNames as? [String] {
         print("可用音轨列表: \(trackNames)")
     }
-    print("当前音轨索引: \(player.audioTrackIndex)")
+    print("当前音轨索引: \(String(describing: player.value(forKey: "audioTrackIndex")))")
     
     // KTV mkv文件通常有2个音轨：
     // 音轨-1 = 默认/禁用
@@ -369,7 +369,7 @@ func applyVocalMode(player: VLCMediaPlayer, mode: String) {
     
     // 延迟验证是否生效
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-        print("验证 - 当前音轨索引: \(player.audioTrackIndex)")
+        print("验证 - 当前音轨索引: \(String(describing: player.value(forKey: "audioTrackIndex")))")
     }
 }
 
