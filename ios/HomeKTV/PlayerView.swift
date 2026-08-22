@@ -575,9 +575,9 @@ class PlayerManager: ObservableObject {
     // 直接切换音轨（原唱/伴唱）- 尝试多种VLC API
     func switchVocalMode(_ mode: String) {
         vocalMode = mode
-        print("========== switchVocalMode被调用（测试4：直接属性访问）==========")
+        print("========== switchVocalMode被调用（测试5：读取audioTrackNames + setValue写入）==========")
         print("mode: \(mode)")
-        addLog("🔊 [测试4] switchVocalMode被调用: \(mode) (直接属性访问)", type: .info)
+        addLog("🔊 [测试5] switchVocalMode被调用: \(mode) (读取audioTrackNames + setValue写入)", type: .info)
         
         guard let player = vlcPlayer else {
             addLog("❌ VLC播放器未就绪", type: .error)
@@ -587,22 +587,24 @@ class PlayerManager: ObservableObject {
         let targetIndex: Int32 = (mode == "original") ? 1 : 2
         addLog("🎯 目标音轨索引: \(targetIndex)", type: .info)
         
-        // 使用直接属性访问代替KVC的value(forKey:)
-        // audioTrackNames
-        if let trackNames = player.audioTrackNames as? [String] {
+        // 只读取audioTrackNames（已验证安全）
+        if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
             addLog("📋 可用音轨: \(trackNames)", type: .info)
             print("可用音轨: \(trackNames)")
         } else {
-            addLog("⚠️ 无法读取audioTrackNames（直接属性）", type: .warning)
+            addLog("⚠️ 无法读取audioTrackNames", type: .warning)
         }
         
-        // audioTrackIndex - 使用直接属性访问
-        let currentTrack = player.audioTrackIndex
-        addLog("📊 当前音轨索引: \(currentTrack)（直接属性）", type: .info)
-        print("当前音轨索引: \(currentTrack)")
+        // 测试KVC setValue写入操作（有responds(to:)检查）
+        if player.responds(to: Selector(("setAudioTrackIndex:"))) {
+            player.setValue(targetIndex, forKey: "audioTrackIndex")
+            addLog("✅ setValue audioTrackIndex = \(targetIndex)", type: .info)
+        } else {
+            addLog("⚠️ player没有setAudioTrackIndex方法", type: .warning)
+        }
         
-        // audio对象和所有写入操作都禁用
-        addLog("🔇 [测试4] audio对象和写入操作已禁用", type: .warning)
+        // 不读取audioTrackIndex，不使用audio对象
+        addLog("🔇 [测试5] audioTrackIndex读取和audio对象已禁用", type: .warning)
     }
     
     // 保留原方法的占位，后续逐步恢复
