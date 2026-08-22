@@ -4,7 +4,7 @@
 
 ## 界面预览
 
-| 手机点歌首页 | Android TV 待机页 | 曲库与服务仪表盘 |
+| 手机点歌首页 | Android TV Apple TV 待机页 | 曲库与服务仪表盘 |
 | --- | --- | --- |
 | ![手机点歌首页](docs/images/mobile-songbook.png) | ![Android TV 待机页](docs/images/tv-player.png) | ![管理仪表盘](docs/images/admin-dashboard.png) |
 | 搜索、分类、收藏、点歌和遥控都在手机浏览器完成。 | 实机待机界面展示点歌二维码、服务状态与推荐歌曲。 | 统一查看曲库、转码任务和播放服务状态。 |
@@ -51,7 +51,7 @@ Home KTV 是一套运行在家庭 NAS 或 Linux 主机上的局域网点歌系�
 - 逐行 LRC 与增强 LRC 逐字歌词
 - 鼓掌、欢呼、倒彩、干杯等现场音效
 
-### Android TV（Apple TV）） 播放
+### Android TV（Apple TV） 播放
 
 - 播放 MP4、MKV、MPEG、MP3、FLAC 等常见媒体
 - 支持 MPEG-2、MP2 和双音轨 KTV 视频
