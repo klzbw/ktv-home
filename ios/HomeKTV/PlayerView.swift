@@ -518,25 +518,27 @@ class PlayerManager: ObservableObject {
     // 直接控制VLC播放器播放
     func play() {
         print("PlayerManager.play() 被调用, vlcPlayer是否为nil: \(vlcPlayer == nil)")
-        if vlcPlayer == nil {
+        addLog("执行播放, VLC就绪: \(vlcPlayer != nil)", type: .info)
+        guard let player = vlcPlayer else {
             addLog("错误: VLC播放器未就绪", type: .error)
             return
         }
-        vlcPlayer?.play()
+        player.play()
         isPlaying = true
-        addLog("播放", type: .info)
+        addLog("✅ 播放已执行", type: .info)
     }
     
     // 直接控制VLC播放器暂停
     func pause() {
         print("PlayerManager.pause() 被调用, vlcPlayer是否为nil: \(vlcPlayer == nil)")
-        if vlcPlayer == nil {
+        addLog("执行暂停, VLC就绪: \(vlcPlayer != nil)", type: .info)
+        guard let player = vlcPlayer else {
             addLog("错误: VLC播放器未就绪", type: .error)
             return
         }
-        vlcPlayer?.pause()
+        player.pause()
         isPlaying = false
-        addLog("暂停", type: .info)
+        addLog("✅ 暂停已执行", type: .info)
     }
     
     // 切换播放/暂停
@@ -620,12 +622,20 @@ class PlayerManager: ObservableObject {
         wsManager.onEffectChanged = { _ in }
         wsManager.onPlaybackControl = { [weak self] command in
             DispatchQueue.main.async {
-                if command == "play" {
+                print("收到播放控制命令: \(command)")
+                self?.addLog("收到播放控制: \(command)", type: .info)
+                // 处理多种状态格式：play/playing, pause/paused, toggle
+                if command == "play" || command == "playing" {
                     self?.play()
-                } else if command == "pause" {
+                } else if command == "pause" || command == "paused" {
                     self?.pause()
                 } else if command == "toggle" {
                     self?.togglePlayback()
+                } else if command == "idle" {
+                    // 空闲状态，停止播放
+                    self?.currentSong = nil
+                    self?.videoURL = nil
+                    self?.showIdleScreen = true
                 }
             }
         }
