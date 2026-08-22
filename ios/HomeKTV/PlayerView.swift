@@ -575,6 +575,23 @@ class PlayerManager: ObservableObject {
     // 直接切换音轨（原唱/伴唱）- 尝试多种VLC API
     func switchVocalMode(_ mode: String) {
         vocalMode = mode
+        print("========== switchVocalMode被调用（安全模式，无KVC操作）==========")
+        print("mode: \(mode)")
+        addLog("🔇 [安全模式] switchVocalMode被调用: \(mode) (KVC已禁用)", type: .warning)
+        
+        guard let player = vlcPlayer else {
+            addLog("❌ VLC播放器未就绪", type: .error)
+            return
+        }
+        
+        // 安全模式：不执行任何KVC操作，只打印日志，防止闪退
+        addLog("🔇 安全模式：音轨切换已禁用，防止KVC闪退", type: .warning)
+        return
+    }
+    
+    // 保留原方法的占位，后续逐步恢复
+    func switchVocalModeOriginal(_ mode: String) {
+        vocalMode = mode
         print("========== switchVocalMode被调用 ==========")
         print("mode: \(mode)")
         addLog("🔊 switchVocalMode被调用: \(mode)", type: .info)
