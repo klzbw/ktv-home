@@ -476,7 +476,8 @@ struct VLCVideoView: UIViewRepresentable {
         containerView.backgroundColor = .black
         containerView.contentMode = .scaleAspectFill
         containerView.clipsToBounds = true
-        containerView.translatesAutoresizingMaskIntoConstraints = false
+        // 不设置translatesAutoresizingMaskIntoConstraints = false，让SwiftUI自动管理布局
+        containerView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         
         let player = VLCMediaPlayer()
         player.drawable = containerView
@@ -507,6 +508,15 @@ struct VLCVideoView: UIViewRepresentable {
         if let drawable = player.drawable as? UIView, drawable !== uiView {
             player.drawable = uiView
         }
+        
+        // 确保视图填充整个父视图（横屏全屏显示关键）
+        if let superview = uiView.superview {
+            uiView.frame = superview.bounds
+            uiView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        }
+        
+        uiView.setNeedsLayout()
+        uiView.layoutIfNeeded()
         
         // 确保视图填充整个父视图（横屏修复关键）
         if let superview = uiView.superview {
