@@ -335,41 +335,69 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
 
 // MARK: - 应用音轨模式（原唱/伴唱）全局函数
 func applyVocalMode(player: VLCMediaPlayer, mode: String) {
-    // 打印当前音轨信息（调试用）
-    if let trackNames = player.audioTrackNames as? [String] {
-        print("可用音轨列表: \(trackNames)")
-    }
-    print("当前音轨索引: \(String(describing: player.value(forKey: "audioTrackIndex")))")
+    print("========== 音轨切换调试 ==========")
+    print("目标模式: \(mode)")
+    print("播放器状态: isPlaying=\(player.isPlaying)")
     
-    // KTV mkv文件通常有2个音轨：
-    // 音轨-1 = 默认/禁用
-    // 音轨0 = 伴奏（accompaniment）
-    // 音轨1 = 原唱（original）
-    let trackIndex: Int32
-    if mode == "original" {
-        trackIndex = 1  // 原唱
+    // 打印所有可用音轨
+    if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
+        print("可用音轨数量: \(trackNames.count)")
+        for (i, name) in trackNames.enumerated() {
+            print("  音轨\(i): \(name)")
+        }
     } else {
-        trackIndex = 0  // 伴奏
+        print("无法获取音轨列表，尝试其他方式...")
+        // 尝试通过audio对象获取
+        if let audio = player.value(forKey: "audio") as? NSObject {
+            if let count = audio.value(forKey: "trackCount") as? Int {
+                print("音轨数量(audio.trackCount): \(count)")
+            }
+            if let current = audio.value(forKey: "trackNumber") as? Int32 {
+                print("当前音轨(audio.trackNumber): \(current)")
+            }
+        }
     }
     
-    // 方法1：使用audio.trackNumber（推荐）
+    // KTV mkv文件音轨索引（需要根据实际情况调整）
+    // 尝试两种索引方案
+    let trackIndexA: Int32 = (mode == "original") ? 1 : 0  // 方案A: 0=伴奏, 1=原唱
+    let trackIndexB: Int32 = (mode == "original") ? 0 : 1  // 方案B: 0=原唱, 1=伴奏
+    
+    print("尝试音轨索引方案A: \(trackIndexA) (0=伴奏,1=原唱)")
+    print("尝试音轨索引方案B: \(trackIndexB) (0=原唱,1=伴奏)")
+    
+    // 方法1：通过audio对象设置trackNumber
     if let audio = player.value(forKey: "audio") as? NSObject {
-        audio.setValue(trackIndex, forKey: "trackNumber")
-        print("使用audio.trackNumber设置音轨: \(trackIndex)")
+        audio.setValue(trackIndexA, forKey: "trackNumber")
+        print("方法1成功: audio.trackNumber = \(trackIndexA)")
+    } else {
+        print("方法1失败: 无法获取audio对象")
     }
     
-    // 方法2：使用audioTrackIndex KVC（备用）
-    player.setValue(trackIndex, forKey: "audioTrackIndex")
-    print("使用audioTrackIndex KVC设置音轨: \(trackIndex)")
+    // 方法2：直接设置audioTrackIndex
+    player.setValue(trackIndexA, forKey: "audioTrackIndex")
+    print("方法2: audioTrackIndex KVC = \(trackIndexA)")
     
-    // 方法3：直接设置（如果API支持）
-    // player.audioTrackIndex = trackIndex
+    // 方法3：尝试performSelector
+    // let selector = NSSelectorFromString("setAudioTrackIndex:")
+    // if player.responds(to: selector) {
+    //     player.perform(selector, with: NSNumber(value: trackIndexA))
+    //     print("方法3成功: performSelector")
+    // }
     
-    print("应用音轨模式: \(mode), 目标音轨索引: \(trackIndex)")
+    print("========== 音轨切换调试结束 ==========")
     
-    // 延迟验证是否生效
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-        print("验证 - 当前音轨索引: \(String(describing: player.value(forKey: "audioTrackIndex")))")
+    // 延迟验证
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        print("验证 - 1秒后音轨状态:")
+        if let audio = player.value(forKey: "audio") as? NSObject {
+            if let current = audio.value(forKey: "trackNumber") as? Int32 {
+                print("  audio.trackNumber = \(current)")
+            }
+        }
+        if let current = player.value(forKey: "audioTrackIndex") as? Int32 {
+            print("  audioTrackIndex = \(current)")
+        }
     }
 }
 
