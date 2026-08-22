@@ -7,156 +7,23 @@ struct KTVSong: Codable {
     let id: Int
     let title: String
     let artist: String
-    let language: String?
-    let mediaType: String?
-    let hasVocalTrack: Bool?
-    let durationMs: Int?
-    let lyricType: String?
-    let coverUrl: String?
-    let lyricUrl: String?
-    let playCount: Int?
 }
 
 struct KTVQueueItem: Codable {
     let queueId: Int
     let song: KTVSong
-    let orderedByNick: String?
-    let status: String?
 }
 
 struct KTVQueue: Codable {
     let playing: KTVQueueItem?
     let list: [KTVQueueItem]?
-    let state: String?
-    let volume: Int?
-    let muted: Bool?
     let vocalMode: String?
-    let tvOnline: Bool?
-    let connectedPhones: Int?
-}
-
-// MARK: - WebSocket管理器
-class WebSocketManager: NSObject, ObservableObject {
-    @Published var isConnected = false
-    @Published var vocalMode: String = "accompaniment"
-    @Published var volume: Int = 60
-    @Published var isMuted: Bool = false
-    
-    private var webSocket: URLSessionWebSocketTask?
-    private var pingTimer: Timer?
-    private var host: String = ""
-    private var port: Int = 8980
-    var onVocalChanged: ((String) -> Void)?
-    var onVolumeChanged: ((Int) -> Void)?
-    var onMuteChanged: ((Bool) -> Void)?
-    var onPlaybackRestarted: (() -> Void)?
-    
-    func connect(host: String, port: Int) {
-        self.host = host
-        self.port = port
-        
-        guard let url = URL(string: "ws://\(host):\(port)/ws") else { return }
-        
-        let session = URLSession(configuration: .default)
-        webSocket = session.webSocketTask(with: url)
-        webSocket?.resume()
-        
-        receiveMessage()
-        startPing()
-    }
-    
-    func disconnect() {
-        stopPing()
-        webSocket?.cancel()
-        webSocket = nil
-        isConnected = false
-    }
-    
-    private func receiveMessage() {
-        webSocket?.receive { [weak self] result in
-            switch result {
-            case .success(let message):
-                switch message {
-                case .string(let text):
-                    self?.handleMessage(text)
-                case .data(let data):
-                    if let text = String(data: data, encoding: .utf8) {
-                        self?.handleMessage(text)
-                    }
-                @unknown default:
-                    break
-                }
-            case .failure:
-                self?.isConnected = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                    self?.connect(host: self?.host ?? "", port: self?.port ?? 8980)
-                }
-                return
-            }
-            self?.receiveMessage()
-        }
-    }
-    
-    private func handleMessage(_ text: String) {
-        guard let data = text.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = json["type"] as? String else { return }
-        
-        let payload = json["payload"] as? [String: Any]
-        
-        DispatchQueue.main.async { [weak self] in
-            switch type {
-            case "pong":
-                self?.isConnected = true
-            case "vocal_changed":
-                if let mode = payload?["mode"] as? String {
-                    self?.vocalMode = mode
-                    self?.onVocalChanged?(mode)
-                }
-            case "volume_changed":
-                if let vol = payload?["volume"] as? Int {
-                    self?.volume = vol
-                    self?.onVolumeChanged?(vol)
-                }
-            case "mute_changed":
-                if let muted = payload?["muted"] as? Bool {
-                    self?.isMuted = muted
-                    self?.onMuteChanged?(muted)
-                }
-            case "playback_restarted":
-                self?.onPlaybackRestarted?()
-            default:
-                break
-            }
-        }
-    }
-    
-    private func startPing() {
-        stopPing()
-        pingTimer = Timer.scheduledTimer(withTimeInterval: 25, repeats: true) { [weak self] _ in
-            self?.sendPing()
-        }
-    }
-    
-    private func stopPing() {
-        pingTimer?.invalidate()
-        pingTimer = nil
-    }
-    
-    private func sendPing() {
-        let message = ["type": "ping"]
-        if let data = try? JSONSerialization.data(withJSONObject: message),
-           let text = String(data: data, encoding: .utf8) {
-            webSocket?.send(.string(text)) { _ in }
-        }
-    }
 }
 
 // MARK: - VLC播放器视图控制器
 class VLCPlayerViewController: UIViewController {
     var mediaPlayer: VLCMediaPlayer?
     private var playerView: UIView!
-    var currentVocalMode: String = "accompaniment"
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -164,13 +31,8 @@ class VLCPlayerViewController: UIViewController {
         
         playerView = UIView(frame: view.bounds)
         playerView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        playerView.backgroundColor = .black
         view.addSubview(playerView)
         
-        setupPlayer()
-    }
-    
-    func setupPlayer() {
         if mediaPlayer == nil {
             mediaPlayer = VLCMediaPlayer()
             mediaPlayer?.drawable = playerView
@@ -178,38 +40,21 @@ class VLCPlayerViewController: UIViewController {
     }
     
     func play(url: URL) {
-        setupPlayer()
-        
+        if mediaPlayer == nil {
+            mediaPlayer = VLCMediaPlayer()
+            mediaPlayer?.drawable = playerView
+        }
         let media = VLCMedia(url: url)
         mediaPlayer?.media = media
         mediaPlayer?.play()
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.applyVocalMode()
-        }
     }
     
     func setVocalMode(_ mode: String) {
-        currentVocalMode = mode
-        applyVocalMode()
-    }
-    
-    private func applyVocalMode() {
-        guard let player = mediaPlayer else { return }
-        
-        if currentVocalMode == "original" {
-            player.audioTrackIndex = 1
+        if mode == "original" {
+            mediaPlayer?.audioTrackIndex = 1
         } else {
-            player.audioTrackIndex = 0
+            mediaPlayer?.audioTrackIndex = 0
         }
-    }
-    
-    func setVolume(_ volume: Int) {
-        mediaPlayer?.audio?.volume = Int32(volume)
-    }
-    
-    func setMuted(_ muted: Bool) {
-        mediaPlayer?.audio?.muted = muted
     }
     
     func stop() {
@@ -225,13 +70,10 @@ class VLCPlayerViewController: UIViewController {
 // MARK: - 播放管理器
 class PlayerManager: ObservableObject {
     @Published var currentSong: KTVSong?
-    @Published var isPlaying = false
-    @Published var queue: KTVQueue?
     @Published var showIdleScreen = true
-    @Published var errorMessage: String?
+    @Published var queue: KTVQueue?
     
     weak var playerVC: VLCPlayerViewController?
-    let wsManager = WebSocketManager()
     private var timer: Timer?
     private var host: String = ""
     private var port: Int = 8980
@@ -239,24 +81,6 @@ class PlayerManager: ObservableObject {
     func configure(host: String, port: Int) {
         self.host = host
         self.port = port
-        
-        wsManager.connect(host: host, port: port)
-        
-        wsManager.onVocalChanged = { [weak self] mode in
-            self?.playerVC?.setVocalMode(mode)
-        }
-        wsManager.onVolumeChanged = { [weak self] vol in
-            self?.playerVC?.setVolume(vol)
-        }
-        wsManager.onMuteChanged = { [weak self] muted in
-            self?.playerVC?.setMuted(muted)
-        }
-        wsManager.onPlaybackRestarted = { [weak self] in
-            if let song = self?.currentSong {
-                self?.playSong(song)
-            }
-        }
-        
         startPolling()
     }
     
@@ -271,7 +95,6 @@ class PlayerManager: ObservableObject {
     func stopPolling() {
         timer?.invalidate()
         timer = nil
-        wsManager.disconnect()
     }
     
     func fetchQueue() {
@@ -291,31 +114,28 @@ class PlayerManager: ObservableObject {
                             self?.playSong(playing.song)
                         }
                         self?.showIdleScreen = false
-                        self?.isPlaying = true
                     } else {
                         if self?.currentSong != nil {
                             self?.currentSong = nil
                             self?.playerVC?.stop()
                         }
-                        self?.isPlaying = false
                         self?.showIdleScreen = true
                     }
                 }
             } catch {
-                print("解析队列失败: \(error)")
+                print("解析失败: \(error)")
             }
         }.resume()
     }
     
     func playSong(_ song: KTVSong) {
-        guard let url = URL(string: "http://\(host):\(port)/api/stream/\(song.id)") else {
-            errorMessage = "无效的视频地址"
-            return
-        }
-        
+        guard let url = URL(string: "http://\(host):\(port)/api/stream/\(song.id)") else { return }
         playerVC?.play(url: url)
-        if let mode = queue?.vocalMode {
-            playerVC?.setVocalMode(mode)
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            if let mode = self?.queue?.vocalMode {
+                self?.playerVC?.setVocalMode(mode)
+            }
         }
     }
     
@@ -327,7 +147,6 @@ class PlayerManager: ObservableObject {
 
 // MARK: - TV播放视图
 struct TVPlayerView: UIViewControllerRepresentable {
-    @ObservedObject var deviceManager: DeviceManager
     @ObservedObject var playerManager: PlayerManager
     
     func makeUIViewController(context: Context) -> VLCPlayerViewController {
@@ -347,7 +166,6 @@ struct TVPlayerView: UIViewControllerRepresentable {
 // MARK: - 扫码提示页面
 struct IdleOverlayView: View {
     @ObservedObject var deviceManager: DeviceManager
-    @ObservedObject var playerManager: PlayerManager
     @State private var qrImage: UIImage?
     
     var body: some View {
@@ -360,79 +178,45 @@ struct IdleOverlayView: View {
             .ignoresSafeArea()
             
             VStack(spacing: 30) {
-                VStack(spacing: 8) {
-                    Text("家庭KTV")
-                        .font(.system(size: 48, weight: .bold))
-                        .foregroundColor(.white)
-                    Text("FAMILY KARAOKE")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundColor(.gray)
-                        .tracking(4)
-                }
-                .padding(.top, 40)
+                Text("家庭KTV")
+                    .font(.system(size: 48, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.top, 40)
                 
                 Spacer()
                 
-                HStack(spacing: 60) {
-                    VStack(alignment: .leading, spacing: 20) {
-                        Text("手机点歌，电视欢唱")
-                            .font(.system(size: 28, weight: .bold))
-                            .foregroundColor(.white)
-                        Text("一家人的客厅KTV")
-                            .font(.system(size: 18))
-                            .foregroundColor(.gray)
-                        
-                        HStack(spacing: 30) {
-                            StatView(title: "曲库", value: "\(playerManager.queue?.list?.count ?? 0)首")
-                            StatView(title: "已点", value: "\(playerManager.queue?.list?.count ?? 0)首")
-                            StatView(title: "排队", value: "\(playerManager.queue?.list?.count ?? 0)首")
-                        }
-                        .padding(.top, 20)
+                VStack(spacing: 16) {
+                    if let qrImage = qrImage {
+                        Image(uiImage: qrImage)
+                            .interpolation(.none)
+                            .resizable()
+                            .frame(width: 200, height: 200)
+                            .background(Color.white)
+                            .cornerRadius(12)
+                    } else {
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white)
+                            .frame(width: 200, height: 200)
+                            .overlay(ProgressView())
                     }
                     
-                    VStack(spacing: 16) {
-                        if let qrImage = qrImage {
-                            Image(uiImage: qrImage)
-                                .interpolation(.none)
-                                .resizable()
-                                .frame(width: 200, height: 200)
-                                .background(Color.white)
-                                .cornerRadius(12)
-                        } else {
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white)
-                                .frame(width: 200, height: 200)
-                                .overlay(ProgressView())
-                        }
-                        
-                        Text("扫码点歌")
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundColor(.white)
-                        
-                        if let device = deviceManager.connectedDevice {
-                            Text("http://\(device.host):\(device.port)/m")
-                                .font(.system(size: 14))
-                                .foregroundColor(.gray)
-                        }
+                    Text("扫码点歌")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                    
+                    if let device = deviceManager.connectedDevice {
+                        Text("http://\(device.host):\(device.port)/m")
+                            .font(.system(size: 14))
+                            .foregroundColor(.gray)
                     }
                 }
                 
                 Spacer()
-                
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(playerManager.wsManager.isConnected ? Color.green : Color.red)
-                        .frame(width: 8, height: 8)
-                    Text(playerManager.wsManager.isConnected ? "遥控已连接" : "遥控未连接")
-                        .font(.system(size: 12))
-                        .foregroundColor(.gray)
-                }
-                .padding(.bottom, 10)
                 
                 Text("等待点歌中...")
                     .font(.system(size: 16))
                     .foregroundColor(.gray)
-                    .padding(.bottom, 20)
+                    .padding(.bottom, 30)
             }
         }
         .onAppear { generateQRCode() }
@@ -463,22 +247,6 @@ struct IdleOverlayView: View {
     }
 }
 
-struct StatView: View {
-    let title: String
-    let value: String
-    
-    var body: some View {
-        VStack(spacing: 4) {
-            Text(value)
-                .font(.system(size: 24, weight: .bold))
-                .foregroundColor(.white)
-            Text(title)
-                .font(.system(size: 14))
-                .foregroundColor(.gray)
-        }
-    }
-}
-
 // MARK: - 主播放视图
 struct PlayerView: View {
     @ObservedObject var deviceManager: DeviceManager
@@ -486,24 +254,12 @@ struct PlayerView: View {
     
     var body: some View {
         ZStack {
-            TVPlayerView(deviceManager: deviceManager, playerManager: playerManager)
+            TVPlayerView(playerManager: playerManager)
                 .ignoresSafeArea()
             
             if playerManager.showIdleScreen {
-                IdleOverlayView(deviceManager: deviceManager, playerManager: playerManager)
+                IdleOverlayView(deviceManager: deviceManager)
                     .transition(.opacity)
-            }
-            
-            if let error = playerManager.errorMessage {
-                VStack {
-                    Spacer()
-                    Text(error)
-                        .foregroundColor(.white)
-                        .padding()
-                        .background(Color.red.opacity(0.8))
-                        .cornerRadius(8)
-                        .padding(.bottom, 20)
-                }
             }
         }
         .onAppear {
