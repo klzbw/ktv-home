@@ -17,21 +17,16 @@ struct KTVQueueItem: Codable {
 struct KTVQueue: Codable {
     let playing: KTVQueueItem?
     let list: [KTVQueueItem]?
-    let vocalMode: String?
 }
 
-// MARK: - WebSocket管理器
+// MARK: - WebSocket管理器（只连接，不处理事件）
 class WebSocketManager: NSObject, ObservableObject {
     @Published var isConnected = false
-    @Published var vocalMode: String = "accompaniment"
     
     private var webSocket: URLSessionWebSocketTask?
     private var pingTimer: Timer?
     private var host: String = ""
     private var port: Int = 8980
-    
-    var onVocalChanged: ((String) -> Void)?
-    var onPlaybackRestarted: (() -> Void)?
     
     func connect(host: String, port: Int) {
         self.host = host
@@ -57,17 +52,8 @@ class WebSocketManager: NSObject, ObservableObject {
     private func receiveMessage() {
         webSocket?.receive { [weak self] result in
             switch result {
-            case .success(let message):
-                switch message {
-                case .string(let text):
-                    self?.handleMessage(text)
-                case .data(let data):
-                    if let text = String(data: data, encoding: .utf8) {
-                        self?.handleMessage(text)
-                    }
-                @unknown default:
-                    break
-                }
+            case .success:
+                break
             case .failure:
                 self?.isConnected = false
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
@@ -76,30 +62,6 @@ class WebSocketManager: NSObject, ObservableObject {
                 return
             }
             self?.receiveMessage()
-        }
-    }
-    
-    private func handleMessage(_ text: String) {
-        guard let data = text.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = json["type"] as? String else { return }
-        
-        let payload = json["payload"] as? [String: Any]
-        
-        DispatchQueue.main.async { [weak self] in
-            switch type {
-            case "pong":
-                self?.isConnected = true
-            case "vocal_changed":
-                if let mode = payload?["mode"] as? String {
-                    self?.vocalMode = mode
-                    self?.onVocalChanged?(mode)
-                }
-            case "playback_restarted":
-                self?.onPlaybackRestarted?()
-            default:
-                break
-            }
         }
     }
     
@@ -124,10 +86,9 @@ class WebSocketManager: NSObject, ObservableObject {
     }
 }
 
-// MARK: - VLC播放器视图
+// MARK: - VLC播放器视图（最简单版本）
 struct VLCVideoView: UIViewRepresentable {
     let url: URL?
-    let vocalMode: String
     
     func makeUIView(context: Context) -> UIView {
         let containerView = UIView()
@@ -140,45 +101,20 @@ struct VLCVideoView: UIViewRepresentable {
             let media = VLCMedia(url: url)
             player.media = media
             player.play()
-            
-            // 延迟设置音轨
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                self.applyVocalMode(player: player, mode: vocalMode)
-            }
         }
         
         context.coordinator.player = player
         context.coordinator.lastURL = url
-        context.coordinator.lastVocalMode = vocalMode
         return containerView
     }
     
     func updateUIView(_ uiView: UIView, context: Context) {
-        guard let player = context.coordinator.player else { return }
-        
-        // URL变化时重新播放
         if let url = url, context.coordinator.lastURL != url {
             context.coordinator.lastURL = url
             let media = VLCMedia(url: url)
-            player.media = media
-            player.play()
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                self.applyVocalMode(player: player, mode: vocalMode)
-            }
+            context.coordinator.player?.media = media
+            context.coordinator.player?.play()
         }
-        
-        // 原唱/伴唱变化
-        if context.coordinator.lastVocalMode != vocalMode {
-            context.coordinator.lastVocalMode = vocalMode
-            applyVocalMode(player: player, mode: vocalMode)
-        }
-    }
-    
-    private func applyVocalMode(player: VLCMediaPlayer, mode: String) {
-        // KTV mkv通常有2个音轨：0=伴奏，1=原唱
-        let trackIndex: Int32 = (mode == "original") ? 1 : 0
-        player.audioTrackIndex = trackIndex
     }
     
     func makeCoordinator() -> Coordinator {
@@ -188,7 +124,6 @@ struct VLCVideoView: UIViewRepresentable {
     class Coordinator: NSObject {
         var player: VLCMediaPlayer?
         var lastURL: URL?
-        var lastVocalMode: String = "accompaniment"
     }
 }
 
@@ -197,7 +132,6 @@ class PlayerManager: ObservableObject {
     @Published var currentSong: KTVSong?
     @Published var showIdleScreen = true
     @Published var videoURL: URL?
-    @Published var vocalMode: String = "accompaniment"
     
     let wsManager = WebSocketManager()
     private var timer: Timer?
@@ -207,23 +141,7 @@ class PlayerManager: ObservableObject {
     func configure(host: String, port: Int) {
         self.host = host
         self.port = port
-        
-        // 连接WebSocket
         wsManager.connect(host: host, port: port)
-        
-        // WebSocket回调
-        wsManager.onVocalChanged = { [weak self] mode in
-            self?.vocalMode = mode
-        }
-        wsManager.onPlaybackRestarted = { [weak self] in
-            if let song = self?.currentSong {
-                self?.videoURL = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(song.id)")
-                }
-            }
-        }
-        
         startPolling()
     }
     
@@ -250,11 +168,6 @@ class PlayerManager: ObservableObject {
             do {
                 let queue = try JSONDecoder().decode(KTVQueue.self, from: data)
                 DispatchQueue.main.async {
-                    // 初始化vocalMode
-                    if let mode = queue.vocalMode, self?.vocalMode == "accompaniment" {
-                        self?.vocalMode = mode
-                    }
-                    
                     if let playing = queue.playing {
                         if self?.currentSong?.id != playing.song.id {
                             self?.currentSong = playing.song
@@ -327,7 +240,6 @@ struct IdleOverlayView: View {
                 
                 Spacer()
                 
-                // WebSocket连接状态
                 HStack(spacing: 8) {
                     Circle()
                         .fill(wsManager.isConnected ? Color.green : Color.red)
@@ -379,11 +291,8 @@ struct PlayerView: View {
     
     var body: some View {
         ZStack {
-            VLCVideoView(
-                url: playerManager.videoURL,
-                vocalMode: playerManager.vocalMode
-            )
-            .ignoresSafeArea()
+            VLCVideoView(url: playerManager.videoURL)
+                .ignoresSafeArea()
             
             if playerManager.showIdleScreen {
                 IdleOverlayView(deviceManager: deviceManager, wsManager: playerManager.wsManager)
