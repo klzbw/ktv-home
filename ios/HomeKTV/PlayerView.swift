@@ -1,7 +1,6 @@
 import SwiftUI
 import MobileVLCKit
 import Combine
-import AVFoundation
 
 // MARK: - 数据模型
 struct KTVSong: Codable {
@@ -41,13 +40,14 @@ enum KTVEffect: String {
 }
 
 // MARK: - WebSocket管理器
-class WebSocketManager: NSObject, ObservableObject {
+class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     @Published var isConnected = false
     @Published var vocalMode: String = "accompaniment"
     @Published var currentEffect: KTVEffect?
     @Published var showEffect = false
     
     private var webSocket: URLSessionWebSocketTask?
+    private var session: URLSession?
     private var pingTimer: Timer?
     private var host: String = ""
     private var port: Int = 8980
@@ -62,8 +62,10 @@ class WebSocketManager: NSObject, ObservableObject {
         
         guard let url = URL(string: "ws://\(host):\(port)/ws") else { return }
         
-        let session = URLSession(configuration: .default)
-        webSocket = session.webSocketTask(with: url)
+        // 使用单例session，避免创建多个session导致崩溃
+        let config = URLSessionConfiguration.default
+        session = URLSession(configuration: config, delegate: self, delegateQueue: OperationQueue.main)
+        webSocket = session?.webSocketTask(with: url)
         webSocket?.resume()
         
         receiveMessage()
@@ -74,31 +76,37 @@ class WebSocketManager: NSObject, ObservableObject {
         stopPing()
         webSocket?.cancel()
         webSocket = nil
+        session?.invalidateAndCancel()
+        session = nil
         isConnected = false
     }
     
     private func receiveMessage() {
         webSocket?.receive { [weak self] result in
+            guard let self = self else { return }
+            
             switch result {
             case .success(let message):
                 switch message {
                 case .string(let text):
-                    self?.handleMessage(text)
+                    self.handleMessage(text)
                 case .data(let data):
                     if let text = String(data: data, encoding: .utf8) {
-                        self?.handleMessage(text)
+                        self.handleMessage(text)
                     }
                 @unknown default:
                     break
                 }
-            case .failure:
-                self?.isConnected = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            case .failure(let error):
+                print("WebSocket错误: \(error.localizedDescription)")
+                self.isConnected = false
+                // 延迟重连
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     self?.connect(host: self?.host ?? "", port: self?.port ?? 8980)
                 }
                 return
             }
-            self?.receiveMessage()
+            self.receiveMessage()
         }
     }
     
@@ -110,28 +118,29 @@ class WebSocketManager: NSObject, ObservableObject {
         let payload = json["payload"] as? [String: Any]
         
         DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
             switch type {
             case "pong":
-                self?.isConnected = true
+                self.isConnected = true
             case "vocal_changed":
                 if let mode = payload?["mode"] as? String {
-                    self?.vocalMode = mode
-                    self?.onVocalChanged?(mode)
+                    self.vocalMode = mode
+                    self.onVocalChanged?(mode)
                 }
             case "effect":
                 if let effectStr = payload?["effect"] as? String {
                     let effect = KTVEffect(rawValue: effectStr) ?? .unknown
-                    self?.currentEffect = effect
-                    self?.showEffect = true
-                    self?.onEffectChanged?(effect)
+                    self.currentEffect = effect
+                    self.showEffect = true
+                    self.onEffectChanged?(effect)
                     
-                    // 3秒后隐藏效果提示
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
                         self?.showEffect = false
                     }
                 }
             case "playback_restarted":
-                self?.onPlaybackRestarted?()
+                self.onPlaybackRestarted?()
             default:
                 break
             }
@@ -154,20 +163,27 @@ class WebSocketManager: NSObject, ObservableObject {
         let message = ["type": "ping"]
         if let data = try? JSONSerialization.data(withJSONObject: message),
            let text = String(data: data, encoding: .utf8) {
-            webSocket?.send(.string(text)) { _ in }
+            webSocket?.send(.string(text)) { error in
+                if let error = error {
+                    print("发送ping失败: \(error.localizedDescription)")
+                }
+            }
         }
     }
-}
-
-// MARK: - 氛围音效播放器
-class EffectSoundPlayer {
-    static let shared = EffectSoundPlayer()
-    private var audioPlayer: AVAudioPlayer?
     
-    func playEffect(_ effect: KTVEffect) {
-        // 这里可以播放本地音效文件
-        // 目前只做提示，后续可以添加音效文件
-        print("播放氛围效果: \(effect.displayName)")
+    // URLSessionWebSocketDelegate
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        DispatchQueue.main.async {
+            self.isConnected = true
+            print("WebSocket已连接")
+        }
+    }
+    
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        DispatchQueue.main.async {
+            self.isConnected = false
+            print("WebSocket已断开")
+        }
     }
 }
 
@@ -180,6 +196,7 @@ struct VLCVideoView: UIViewRepresentable {
         let containerView = UIView()
         containerView.backgroundColor = .black
         
+        // 在主线程初始化VLC播放器
         let player = VLCMediaPlayer()
         player.drawable = containerView
         
@@ -187,11 +204,6 @@ struct VLCVideoView: UIViewRepresentable {
             let media = VLCMedia(url: url)
             player.media = media
             player.play()
-            
-            // 延迟设置音轨
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                self.applyVocalMode(player: player, mode: vocalMode)
-            }
         }
         
         context.coordinator.player = player
@@ -209,24 +221,7 @@ struct VLCVideoView: UIViewRepresentable {
             let media = VLCMedia(url: url)
             player.media = media
             player.play()
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                self.applyVocalMode(player: player, mode: vocalMode)
-            }
         }
-        
-        // 原唱/伴唱变化
-        if context.coordinator.lastVocalMode != vocalMode {
-            context.coordinator.lastVocalMode = vocalMode
-            applyVocalMode(player: player, mode: vocalMode)
-        }
-    }
-    
-    private func applyVocalMode(player: VLCMediaPlayer, mode: String) {
-        // KTV mkv通常有2个音轨：0=伴奏，1=原唱
-        let trackIndex: Int32 = (mode == "original") ? 1 : 0
-        // 使用KVC方式设置音轨，避免编译错误
-        player.setValue(trackIndex, forKey: "audioTrackIndex")
     }
     
     func makeCoordinator() -> Coordinator {
@@ -256,20 +251,22 @@ class PlayerManager: ObservableObject {
         self.host = host
         self.port = port
         
-        // 连接WebSocket
-        wsManager.connect(host: host, port: port)
+        // 延迟连接WebSocket，避免立即连接导致崩溃
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.wsManager.connect(host: host, port: port)
+        }
         
         // WebSocket回调
         wsManager.onVocalChanged = { [weak self] mode in
             self?.vocalMode = mode
         }
-        wsManager.onEffectChanged = { effect in
-            EffectSoundPlayer.shared.playEffect(effect)
+        wsManager.onEffectChanged = { _ in
+            // 氛围效果由UI层处理
         }
         wsManager.onPlaybackRestarted = { [weak self] in
             if let song = self?.currentSong {
                 self?.videoURL = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
                     self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(song.id)")
                 }
             }
@@ -354,7 +351,6 @@ struct EffectOverlayView: View {
                 Spacer()
             }
             .transition(.opacity)
-            .animation(.easeInOut, value: show)
         }
     }
     
