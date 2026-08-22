@@ -145,6 +145,54 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
     var onPlaybackRestarted: (() -> Void)?
     var onPlaybackControl: ((String) -> Void)?
     
+    // 直接控制VLC播放器播放
+    func play() {
+        vlcPlayer?.play()
+        isPlaying = true
+        addLog("播放", type: .info)
+    }
+    
+    // 直接控制VLC播放器暂停
+    func pause() {
+        vlcPlayer?.pause()
+        isPlaying = false
+        addLog("暂停", type: .info)
+    }
+    
+    // 切换播放/暂停
+    func togglePlayback() {
+        if vlcPlayer?.isPlaying == true {
+            pause()
+        } else {
+            play()
+        }
+    }
+    
+    // 直接切换音轨（原唱/伴唱）
+    func switchVocalMode(_ mode: String) {
+        vocalMode = mode
+        guard let player = vlcPlayer else {
+            addLog("VLC播放器未就绪", type: .error)
+            return
+        }
+        
+        let targetIndex: Int32 = (mode == "original") ? 1 : 0
+        addLog("切换音轨到: \(mode) (索引\(targetIndex))", type: .info)
+        
+        // 方法1：通过audio对象设置trackNumber
+        if let audio = player.value(forKey: "audio") as AnyObject? {
+            audio.setValue(targetIndex, forKey: "trackNumber")
+        }
+        
+        // 方法2：KVC设置audioTrackIndex
+        player.setValue(targetIndex, forKey: "audioTrackIndex")
+        
+        // 打印可用音轨
+        if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
+            addLog("可用音轨: \(trackNames)", type: .info)
+        }
+    }
+    
     private func addLog(_ message: String, type: DebugLogEntry.LogType = .info) {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
@@ -374,8 +422,8 @@ struct VLCVideoView: UIViewRepresentable {
     let url: URL?
     let songId: Int?
     let vocalMode: String  // "original" 或 "accompaniment"
-    let playbackCommand: String  // "play", "pause", "toggle"
     let onLog: ((String, DebugLogEntry.LogType) -> Void)?
+    let onPlayerReady: ((VLCMediaPlayer) -> Void)?  // 播放器就绪回调
     
     func makeUIView(context: Context) -> UIView {
         let containerView = UIView()
@@ -387,21 +435,14 @@ struct VLCVideoView: UIViewRepresentable {
         let player = VLCMediaPlayer()
         player.drawable = containerView
         
+        // 通知播放器就绪
+        onPlayerReady?(player)
+        
         if let url = url {
             let media = VLCMedia(url: url)
             player.media = media
             player.play()
             onLog?("开始播放: \(url.lastPathComponent)", .info)
-            
-            // 多次尝试应用音轨模式（确保媒体加载完成）
-            for delay in [0.5, 1.0, 2.0, 3.0] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                    if player.isPlaying {
-                        print("\(delay)秒后应用音轨模式")
-                        applyVocalMode(player: player, mode: vocalMode)
-                    }
-                }
-            }
         }
         
         context.coordinator.player = player
@@ -468,7 +509,6 @@ struct VLCVideoView: UIViewRepresentable {
         var lastURL: URL?
         var lastSongId: Int?
         var lastVocalMode: String = "accompaniment"
-        var lastPlaybackCommand: String = ""
     }
 }
 
@@ -480,12 +520,60 @@ class PlayerManager: ObservableObject {
     @Published var vocalMode: String = "accompaniment"
     @Published var debugLogs: [DebugLogEntry] = []
     @Published var isPlaying: Bool = false
-    @Published var playbackCommand: String = ""  // "play", "pause", "toggle"
     
     let wsManager = WebSocketManager()
     private var timer: Timer?
     private var host: String = ""
     private var port: Int = 8980
+    weak var vlcPlayer: VLCMediaPlayer?  // VLC播放器引用，直接控制播放/暂停/音轨
+    
+    // 直接控制VLC播放器播放
+    func play() {
+        vlcPlayer?.play()
+        isPlaying = true
+        addLog("播放", type: .info)
+    }
+    
+    // 直接控制VLC播放器暂停
+    func pause() {
+        vlcPlayer?.pause()
+        isPlaying = false
+        addLog("暂停", type: .info)
+    }
+    
+    // 切换播放/暂停
+    func togglePlayback() {
+        if vlcPlayer?.isPlaying == true {
+            pause()
+        } else {
+            play()
+        }
+    }
+    
+    // 直接切换音轨（原唱/伴唱）
+    func switchVocalMode(_ mode: String) {
+        vocalMode = mode
+        guard let player = vlcPlayer else {
+            addLog("VLC播放器未就绪", type: .error)
+            return
+        }
+        
+        let targetIndex: Int32 = (mode == "original") ? 1 : 0
+        addLog("切换音轨到: \(mode) (索引\(targetIndex))", type: .info)
+        
+        // 方法1：通过audio对象设置trackNumber
+        if let audio = player.value(forKey: "audio") as AnyObject? {
+            audio.setValue(targetIndex, forKey: "trackNumber")
+        }
+        
+        // 方法2：KVC设置audioTrackIndex
+        player.setValue(targetIndex, forKey: "audioTrackIndex")
+        
+        // 打印可用音轨
+        if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
+            addLog("可用音轨: \(trackNames)", type: .info)
+        }
+    }
     
     private func addLog(_ message: String, type: DebugLogEntry.LogType = .info) {
         let formatter = DateFormatter()
@@ -510,18 +598,19 @@ class PlayerManager: ObservableObject {
         }
         
         wsManager.onVocalChanged = { [weak self] mode in
-            self?.vocalMode = mode
+            DispatchQueue.main.async {
+                self?.switchVocalMode(mode)
+            }
         }
         wsManager.onEffectChanged = { _ in }
         wsManager.onPlaybackControl = { [weak self] command in
             DispatchQueue.main.async {
-                self?.playbackCommand = command
                 if command == "play" {
-                    self?.isPlaying = true
+                    self?.play()
                 } else if command == "pause" {
-                    self?.isPlaying = false
+                    self?.pause()
                 } else if command == "toggle" {
-                    self?.isPlaying.toggle()
+                    self?.togglePlayback()
                 }
             }
         }
@@ -1072,7 +1161,6 @@ struct PlayerView: View {
                 url: playerManager.videoURL,
                 songId: playerManager.currentSong?.id,
                 vocalMode: playerManager.vocalMode,
-                playbackCommand: playerManager.playbackCommand,
                 onLog: { message, type in
                     let formatter = DateFormatter()
                     formatter.dateFormat = "HH:mm:ss"
@@ -1084,6 +1172,11 @@ struct PlayerView: View {
                             self.playerManager.debugLogs.removeLast()
                         }
                     }
+                },
+                onPlayerReady: { player in
+                    // 将VLC播放器引用传递给PlayerManager，用于直接控制播放/暂停/音轨
+                    self.playerManager.vlcPlayer = player
+                    print("VLC播放器就绪，已传递给PlayerManager")
                 }
             )
             .ignoresSafeArea()
