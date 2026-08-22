@@ -1,0 +1,34 @@
+name: HomeKTV
+options:
+  bundleIdPrefix: com.homektv
+  deploymentTarget:
+    tvOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    ENABLE_BITCODE: NO
+    CODE_SIGN_STYLE: Automatic
+    PRODUCT_BUNDLE_IDENTIFIER: com.homektv.tvos
+    TARGETED_DEVICE_FAMILY: "3"
+    SDKROOT: appletvos
+    SUPPORTED_PLATFORMS: "appletvos"
+    TVOS_DEPLOYMENT_TARGET: "15.0"
+    ONLY_ACTIVE_ARCH: NO
+    VALID_ARCHS: "arm64"
+targets:
+  HomeKTV:
+    type: application
+    platform: tvOS
+    sources:
+      - path: HomeKTV
+    settings:
+      base:
+        PRODUCT_NAME: HomeKTV
+        PRODUCT_BUNDLE_IDENTIFIER: com.homektv.tvos
+        INFOPLIST_FILE: HomeKTV/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon"
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        PROVISIONING_PROFILE_SPECIFIER: ""
