@@ -10,10 +10,8 @@ struct HomeView: View {
         NavigationView {
             VStack(spacing: 0) {
                 if deviceManager.connectedDevice != nil {
-                    // 已连接，显示播放页面
                     PlayerView(deviceManager: deviceManager)
                 } else {
-                    // 未连接，显示设备列表
                     deviceListView
                 }
             }
@@ -37,7 +35,6 @@ struct HomeView: View {
 
     private var deviceListView: some View {
         VStack(spacing: 0) {
-            // 扫描按钮
             Button(action: {
                 deviceManager.scanForDevices()
             }) {
@@ -57,7 +54,6 @@ struct HomeView: View {
             }
             .disabled(deviceManager.isScanning)
 
-            // 手动输入按钮
             Button(action: {
                 showManualInput = true
             }) {
@@ -74,7 +70,6 @@ struct HomeView: View {
                 .padding(.vertical, 8)
             }
 
-            // 设备列表
             List {
                 if deviceManager.devices.isEmpty {
                     Section(header: Text("暂无设备")) {
@@ -83,7 +78,7 @@ struct HomeView: View {
                             .padding(.vertical)
                     }
                 } else {
-                    Section(header: Text("可用设备 (\(deviceManager.devices.count))")) {
+                    Section(header: Text("可用设备")) {
                         ForEach(deviceManager.devices) { device in
                             DeviceRow(device: device) {
                                 deviceManager.connectToDevice(device)
@@ -128,7 +123,7 @@ struct HomeView: View {
                 Section {
                     Button("连接") {
                         if !manualHost.isEmpty, let port = Int(manualPort) {
-                            let device = DeviceManager.KTVDevice(name: manualHost, host: manualHost, port: port)
+                            let device = KTVDevice(name: manualHost, host: manualHost, port: port)
                             deviceManager.connectToDevice(device)
                             showManualInput = false
                             manualHost = ""
@@ -152,7 +147,7 @@ struct HomeView: View {
 }
 
 struct DeviceRow: View {
-    let device: DeviceManager.KTVDevice
+    let device: KTVDevice
     let onConnect: () -> Void
 
     var body: some View {
