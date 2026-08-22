@@ -144,6 +144,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
     var onEffectChanged: ((KTVEffect) -> Void)?
     var onPlaybackRestarted: (() -> Void)?
     var onPlaybackControl: ((String) -> Void)?
+    var onStateSync: (([String: Any]) -> Void)?
     
     private func addLog(_ message: String, type: DebugLogEntry.LogType = .info) {
         let formatter = DateFormatter()
@@ -244,9 +245,29 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                 vocalMode = mode
                 onVocalChanged?(mode)
             }
-        case "play", "pause", "playback_state", "toggle_playback":
+        case "sync_full", "now_playing", "queue_updated":
+            // 完整状态快照或播放状态更新
+            addLog("状态同步: \(type)", type: .websocket)
+            // 提取播放状态
+            if let state = payload?["state"] as? String {
+                addLog("播放状态: \(state)")
+                onPlaybackControl?(state)
+            }
+            // 提取音轨模式
+            if let mode = payload?["vocalMode"] as? String {
+                addLog("音轨模式(同步): \(mode)")
+                vocalMode = mode
+                onVocalChanged?(mode)
+            }
+            // 从playing对象中提取状态
+            if let playing = payload?["playing"] as? [String: Any] {
+                if let state = payload?["state"] as? String {
+                    onPlaybackControl?(state)
+                }
+            }
+        case "play", "pause", "player_state", "playback_state", "toggle_playback":
             let state = payload?["state"] as? String ?? type
-            addLog("播放控制: \(state)")
+            addLog("播放控制: \(state), type: \(type)", type: .websocket)
             onPlaybackControl?(state)
         case "effect", "effect_play", "play_effect", "atmosphere", "ambiance":
             var effectStr: String?
