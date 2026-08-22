@@ -335,70 +335,49 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
 
 // MARK: - 应用音轨模式（原唱/伴唱）全局函数
 func applyVocalMode(player: VLCMediaPlayer, mode: String) {
-    print("========== 音轨切换调试 ==========")
-    print("目标模式: \(mode)")
-    print("播放器状态: isPlaying=\(player.isPlaying)")
+    print("========== 音轨切换 ==========")
+    print("目标模式: \(mode), isPlaying: \(player.isPlaying)")
     
-    // 打印所有可用音轨
-    if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
-        print("可用音轨数量: \(trackNames.count)")
-        for (i, name) in trackNames.enumerated() {
-            print("  音轨\(i): \(name)")
-        }
-    } else {
-        print("无法获取音轨列表，尝试其他方式...")
-        // 尝试通过audio对象获取
-        if let audio = player.value(forKey: "audio") as? NSObject {
-            if let count = audio.value(forKey: "trackCount") as? Int {
-                print("音轨数量(audio.trackCount): \(count)")
-            }
-            if let current = audio.value(forKey: "trackNumber") as? Int32 {
-                print("当前音轨(audio.trackNumber): \(current)")
-            }
-        }
-    }
+    // KTV mkv文件通常有2个音轨：
+    // 音轨0 = 伴奏（accompaniment）
+    // 音轨1 = 原唱（original）
+    // 但有些文件可能相反，所以尝试两种
+    let targetIndex: Int32 = (mode == "original") ? 1 : 0
     
-    // KTV mkv文件音轨索引（需要根据实际情况调整）
-    // 尝试两种索引方案
-    let trackIndexA: Int32 = (mode == "original") ? 1 : 0  // 方案A: 0=伴奏, 1=原唱
-    let trackIndexB: Int32 = (mode == "original") ? 0 : 1  // 方案B: 0=原唱, 1=伴奏
-    
-    print("尝试音轨索引方案A: \(trackIndexA) (0=伴奏,1=原唱)")
-    print("尝试音轨索引方案B: \(trackIndexB) (0=原唱,1=伴奏)")
-    
-    // 方法1：通过audio对象设置trackNumber
+    // 方法1：直接通过audio对象设置trackNumber（最可靠）
     if let audio = player.value(forKey: "audio") as? NSObject {
-        audio.setValue(trackIndexA, forKey: "trackNumber")
-        print("方法1成功: audio.trackNumber = \(trackIndexA)")
-    } else {
-        print("方法1失败: 无法获取audio对象")
+        audio.setValue(targetIndex, forKey: "trackNumber")
+        print("方法1: audio.trackNumber = \(targetIndex)")
     }
     
-    // 方法2：直接设置audioTrackIndex
-    player.setValue(trackIndexA, forKey: "audioTrackIndex")
-    print("方法2: audioTrackIndex KVC = \(trackIndexA)")
+    // 方法2：KVC设置audioTrackIndex
+    player.setValue(targetIndex, forKey: "audioTrackIndex")
+    print("方法2: audioTrackIndex = \(targetIndex)")
     
-    // 方法3：尝试performSelector
-    // let selector = NSSelectorFromString("setAudioTrackIndex:")
-    // if player.responds(to: selector) {
-    //     player.perform(selector, with: NSNumber(value: trackIndexA))
-    //     print("方法3成功: performSelector")
-    // }
-    
-    print("========== 音轨切换调试结束 ==========")
-    
-    // 延迟验证
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-        print("验证 - 1秒后音轨状态:")
+    // 方法3：如果方法1和2都无效，尝试反向索引（有些文件0=原唱,1=伴奏）
+    // 延迟0.3秒后检查是否生效，如果没生效则尝试反向
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        var currentIndex: Int32 = -1
         if let audio = player.value(forKey: "audio") as? NSObject {
-            if let current = audio.value(forKey: "trackNumber") as? Int32 {
-                print("  audio.trackNumber = \(current)")
+            if let idx = audio.value(forKey: "trackNumber") as? Int32 {
+                currentIndex = idx
             }
         }
-        if let current = player.value(forKey: "audioTrackIndex") as? Int32 {
-            print("  audioTrackIndex = \(current)")
+        
+        print("0.3秒后当前音轨: \(currentIndex), 目标: \(targetIndex)")
+        
+        // 如果当前音轨不等于目标音轨，尝试反向索引
+        if currentIndex != targetIndex && currentIndex != -1 {
+            let reverseIndex: Int32 = (targetIndex == 0) ? 1 : 0
+            print("尝试反向索引: \(reverseIndex)")
+            if let audio = player.value(forKey: "audio") as? NSObject {
+                audio.setValue(reverseIndex, forKey: "trackNumber")
+            }
+            player.setValue(reverseIndex, forKey: "audioTrackIndex")
         }
     }
+    
+    print("========== 音轨切换结束 ==========")
 }
 
 // MARK: - VLC播放器视图
@@ -424,10 +403,14 @@ struct VLCVideoView: UIViewRepresentable {
             player.play()
             onLog?("开始播放: \(url.lastPathComponent)", .info)
             
-            // 延迟应用音轨模式（等待媒体加载完成）
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                print("媒体加载完成，应用音轨模式")
-                applyVocalMode(player: player, mode: vocalMode)
+            // 多次尝试应用音轨模式（确保媒体加载完成）
+            for delay in [0.5, 1.0, 2.0, 3.0] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    if player.isPlaying {
+                        print("\(delay)秒后应用音轨模式")
+                        applyVocalMode(player: player, mode: vocalMode)
+                    }
+                }
             }
         }
         
