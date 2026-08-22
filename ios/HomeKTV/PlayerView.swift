@@ -362,6 +362,56 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                     self?.showEffect = false
                 }
             }
+        case "volume_changed":
+            // 打印完整payload用于调试
+            if let payloadData = try? JSONSerialization.data(withJSONObject: payload ?? [:], options: .prettyPrinted),
+               let payloadStr = String(data: payloadData, encoding: .utf8) {
+                addLog("volume_changed完整payload: \(payloadStr)", type: .websocket)
+                print("volume_changed完整payload: \(payloadStr)")
+            }
+            
+            // 从多个位置尝试提取音量值
+            var volume: Int? = nil
+            var muted: Bool? = nil
+            
+            // 位置1：payload.volume
+            if let v = payload?["volume"] as? Int {
+                volume = v
+                addLog("从payload.volume获取: \(v)", type: .info)
+            }
+            // 位置2：payload.volume作为字符串
+            else if let vStr = payload?["volume"] as? String, let v = Int(vStr) {
+                volume = v
+                addLog("从payload.volume(字符串)获取: \(v)", type: .info)
+            }
+            // 位置3：payload.playing.volume
+            else if let playing = payload?["playing"] as? [String: Any],
+                    let v = playing["volume"] as? Int {
+                volume = v
+                addLog("从playing.volume获取: \(v)", type: .info)
+            }
+            
+            // 提取静音状态
+            if let m = payload?["muted"] as? Bool {
+                muted = m
+                addLog("从payload.muted获取: \(m)", type: .info)
+            } else if let playing = payload?["playing"] as? [String: Any],
+                      let m = playing["muted"] as? Bool {
+                muted = m
+                addLog("从playing.muted获取: \(m)", type: .info)
+            }
+            
+            // 调用回调
+            if volume != nil || muted != nil {
+                addLog("音量变化: volume=\(volume ?? -1), muted=\(muted ?? false)", type: .info)
+                onVolumeChanged?(volume ?? 50, muted ?? false)
+            } else {
+                addLog("⚠️ volume_changed消息中未找到volume或muted字段", type: .warning)
+                // 打印payload字段名
+                if let keys = payload?.keys {
+                    addLog("payload字段: \(Array(keys))", type: .warning)
+                }
+            }
         case "playback_restarted":
             addLog("播放重启")
             onPlaybackRestarted?()
@@ -731,6 +781,15 @@ class PlayerManager: ObservableObject {
                 }
             }
         }
+        wsManager.onVolumeChanged = { [weak self] volume, muted in
+            print("onVolumeChanged回调被调用: volume=\(volume), muted=\(muted)")
+            self?.addLog("📞 onVolumeChanged回调: volume=\(volume), muted=\(muted)", type: .info)
+            DispatchQueue.main.async {
+                self?.setVolume(Int32(volume))
+                self?.setMuted(muted)
+            }
+        }
+        
         wsManager.onPlaybackRestarted = { [weak self] in
             if let song = self?.currentSong {
                 self?.addLog("播放重启: \(song.title)", type: .info)
