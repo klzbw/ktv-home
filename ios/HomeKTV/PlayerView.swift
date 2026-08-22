@@ -492,6 +492,54 @@ class PlayerManager: ObservableObject {
         }
     }
     
+    // 直接控制VLC播放器播放
+    func play() {
+        vlcPlayer?.play()
+        isPlaying = true
+        addLog("播放", type: .info)
+    }
+    
+    // 直接控制VLC播放器暂停
+    func pause() {
+        vlcPlayer?.pause()
+        isPlaying = false
+        addLog("暂停", type: .info)
+    }
+    
+    // 切换播放/暂停
+    func togglePlayback() {
+        if vlcPlayer?.isPlaying == true {
+            pause()
+        } else {
+            play()
+        }
+    }
+    
+    // 直接切换音轨（原唱/伴唱）
+    func switchVocalMode(_ mode: String) {
+        vocalMode = mode
+        guard let player = vlcPlayer else {
+            addLog("VLC播放器未就绪", type: .error)
+            return
+        }
+        
+        let targetIndex: Int32 = (mode == "original") ? 1 : 0
+        addLog("切换音轨到: \(mode) (索引\(targetIndex))", type: .info)
+        
+        // 方法1：通过audio对象设置trackNumber
+        if let audio = player.value(forKey: "audio") as AnyObject? {
+            audio.setValue(targetIndex, forKey: "trackNumber")
+        }
+        
+        // 方法2：KVC设置audioTrackIndex
+        player.setValue(targetIndex, forKey: "audioTrackIndex")
+        
+        // 打印可用音轨
+        if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
+            addLog("可用音轨: \(trackNames)", type: .info)
+        }
+    }
+    
     func configure(host: String, port: Int) {
         self.host = host
         self.port = port
