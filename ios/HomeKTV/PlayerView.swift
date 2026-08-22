@@ -35,56 +35,8 @@ struct KTVQueue: Codable {
     let connectedPhones: Int?
 }
 
-// MARK: - WebSocket消息
-struct WSMessage: Codable {
-    let type: String
-    let payload: [String: AnyCodable]?
-}
-
-struct AnyCodable: Codable {
-    let value: Any
-    
-    init(_ value: Any) {
-        self.value = value
-    }
-    
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let intVal = try? container.decode(Int.self) {
-            value = intVal
-        } else if let doubleVal = try? container.decode(Double.self) {
-            value = doubleVal
-        } else if let boolVal = try? container.decode(Bool.self) {
-            value = boolVal
-        } else if let stringVal = try? container.decode(String.self) {
-            value = stringVal
-        } else if let dictVal = try? container.decode([String: AnyCodable].self) {
-            value = dictVal
-        } else if let arrayVal = try? container.decode([AnyCodable].self) {
-            value = arrayVal
-        } else {
-            value = NSNull()
-        }
-    }
-    
-    func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        if let intVal = value as? Int {
-            try container.encode(intVal)
-        } else if let doubleVal = value as? Double {
-            try container.encode(doubleVal)
-        } else if let boolVal = value as? Bool {
-            try container.encode(boolVal)
-        } else if let stringVal = value as? String {
-            try container.encode(stringVal)
-        } else {
-            try container.encodeNil()
-        }
-    }
-}
-
 // MARK: - WebSocket管理器
-class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate {
+class WebSocketManager: NSObject, ObservableObject {
     @Published var isConnected = false
     @Published var vocalMode: String = "accompaniment"
     @Published var volume: Int = 60
@@ -103,10 +55,9 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
         self.host = host
         self.port = port
         
-        let wsScheme = "ws"
-        guard let url = URL(string: "\(wsScheme)://\(host):\(port)/ws") else { return }
+        guard let url = URL(string: "ws://\(host):\(port)/ws") else { return }
         
-        let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        let session = URLSession(configuration: .default)
         webSocket = session.webSocketTask(with: url)
         webSocket?.resume()
         
@@ -137,7 +88,6 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                 }
             case .failure:
                 self?.isConnected = false
-                // 重连
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                     self?.connect(host: self?.host ?? "", port: self?.port ?? 8980)
                 }
@@ -157,7 +107,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
         DispatchQueue.main.async { [weak self] in
             switch type {
             case "pong":
-                break
+                self?.isConnected = true
             case "vocal_changed":
                 if let mode = payload?["mode"] as? String {
                     self?.vocalMode = mode
@@ -175,10 +125,8 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                 }
             case "playback_restarted":
                 self?.onPlaybackRestarted?()
-            case "progress":
-                break
             default:
-                print("WebSocket事件: \(type), payload: \(String(describing: payload))")
+                break
             }
         }
     }
@@ -200,20 +148,6 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
         if let data = try? JSONSerialization.data(withJSONObject: message),
            let text = String(data: data, encoding: .utf8) {
             webSocket?.send(.string(text)) { _ in }
-        }
-    }
-    
-    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
-        DispatchQueue.main.async {
-            self.isConnected = true
-            print("WebSocket已连接")
-        }
-    }
-    
-    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-        DispatchQueue.main.async {
-            self.isConnected = false
-            print("WebSocket已断开")
         }
     }
 }
@@ -250,12 +184,9 @@ class VLCPlayerViewController: UIViewController {
         mediaPlayer?.media = media
         mediaPlayer?.play()
         
-        // 延迟设置音轨（等待媒体加载）
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.applyVocalMode()
         }
-        
-        print("VLC开始播放: \(url.absoluteString)")
     }
     
     func setVocalMode(_ mode: String) {
@@ -266,34 +197,19 @@ class VLCPlayerViewController: UIViewController {
     private func applyVocalMode() {
         guard let player = mediaPlayer else { return }
         
-        // 获取所有音轨
-        if let tracks = player.audioTracks as? [Any] {
-            print("可用音轨数: \(tracks.count)")
-            
-            // KTV mkv通常有2个音轨：0=伴奏，1=原唱
-            // 根据vocalMode切换
-            if currentVocalMode == "original" {
-                // 原唱：选择音轨1（如果有）
-                if tracks.count > 1 {
-                    player.audioTrackIndex = 1
-                    print("切换到原唱（音轨1）")
-                }
-            } else {
-                // 伴奏：选择音轨0
-                player.audioTrackIndex = 0
-                print("切换到伴奏（音轨0）")
-            }
+        if currentVocalMode == "original" {
+            player.audioTrackIndex = 1
+        } else {
+            player.audioTrackIndex = 0
         }
     }
     
     func setVolume(_ volume: Int) {
         mediaPlayer?.audio?.volume = Int32(volume)
-        print("设置音量: \(volume)")
     }
     
     func setMuted(_ muted: Bool) {
         mediaPlayer?.audio?.muted = muted
-        print("设置静音: \(muted)")
     }
     
     func stop() {
@@ -324,10 +240,8 @@ class PlayerManager: ObservableObject {
         self.host = host
         self.port = port
         
-        // 连接WebSocket
         wsManager.connect(host: host, port: port)
         
-        // 设置WebSocket回调
         wsManager.onVocalChanged = { [weak self] mode in
             self?.playerVC?.setVocalMode(mode)
         }
@@ -400,7 +314,6 @@ class PlayerManager: ObservableObject {
         }
         
         playerVC?.play(url: url)
-        // 应用当前的vocalMode
         if let mode = queue?.vocalMode {
             playerVC?.setVocalMode(mode)
         }
@@ -424,7 +337,6 @@ struct TVPlayerView: UIViewControllerRepresentable {
     }
     
     func updateUIViewController(_ uiViewController: VLCPlayerViewController, context: Context) {
-        // 更新
     }
     
     static func dismantleUIViewController(_ uiViewController: VLCPlayerViewController, coordinator: ()) {
@@ -507,7 +419,6 @@ struct IdleOverlayView: View {
                 
                 Spacer()
                 
-                // WebSocket连接状态
                 HStack(spacing: 8) {
                     Circle()
                         .fill(playerManager.wsManager.isConnected ? Color.green : Color.red)
