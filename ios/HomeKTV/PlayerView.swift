@@ -337,6 +337,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
 struct VLCVideoView: UIViewRepresentable {
     let url: URL?
     let songId: Int?
+    let vocalMode: String  // "original" 或 "accompaniment"
     let onLog: ((String, DebugLogEntry.LogType) -> Void)?
     
     func makeUIView(context: Context) -> UIView {
@@ -354,11 +355,17 @@ struct VLCVideoView: UIViewRepresentable {
             player.media = media
             player.play()
             onLog?("开始播放: \(url.lastPathComponent)", .info)
+            
+            // 延迟应用音轨模式（等待媒体加载完成）
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                applyVocalMode(player: player, mode: vocalMode)
+            }
         }
         
         context.coordinator.player = player
         context.coordinator.lastURL = url
         context.coordinator.lastSongId = songId
+        context.coordinator.lastVocalMode = vocalMode
         return containerView
     }
     
@@ -418,6 +425,7 @@ struct VLCVideoView: UIViewRepresentable {
         var player: VLCMediaPlayer?
         var lastURL: URL?
         var lastSongId: Int?
+        var lastVocalMode: String = "accompaniment"
     }
 }
 
@@ -1006,6 +1014,7 @@ struct PlayerView: View {
             VLCVideoView(
                 url: playerManager.videoURL,
                 songId: playerManager.currentSong?.id,
+                vocalMode: playerManager.vocalMode,
                 onLog: { message, type in
                     let formatter = DateFormatter()
                     formatter.dateFormat = "HH:mm:ss"
