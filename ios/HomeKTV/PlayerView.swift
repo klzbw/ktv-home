@@ -388,7 +388,9 @@ struct VLCVideoView: UIViewRepresentable {
         player.drawable = containerView
         
         // 通知播放器就绪
+        print("VLCVideoView.makeUIView - onPlayerReady闭包是否为nil: \(onPlayerReady == nil)")
         onPlayerReady?(player)
+        print("VLCVideoView.makeUIView - 已调用onPlayerReady")
         
         if let url = url {
             let media = VLCMedia(url: url)
@@ -477,7 +479,7 @@ class PlayerManager: ObservableObject {
     private var timer: Timer?
     private var host: String = ""
     private var port: Int = 8980
-    weak var vlcPlayer: VLCMediaPlayer?  // VLC播放器引用，直接控制播放/暂停/音轨
+    var vlcPlayer: VLCMediaPlayer?  // VLC播放器引用，直接控制播放/暂停/音轨（strong，确保不被释放）
     
     private func addLog(_ message: String, type: DebugLogEntry.LogType = .info) {
         let formatter = DateFormatter()
@@ -494,6 +496,11 @@ class PlayerManager: ObservableObject {
     
     // 直接控制VLC播放器播放
     func play() {
+        print("PlayerManager.play() 被调用, vlcPlayer是否为nil: \(vlcPlayer == nil)")
+        if vlcPlayer == nil {
+            addLog("错误: VLC播放器未就绪", type: .error)
+            return
+        }
         vlcPlayer?.play()
         isPlaying = true
         addLog("播放", type: .info)
@@ -501,6 +508,11 @@ class PlayerManager: ObservableObject {
     
     // 直接控制VLC播放器暂停
     func pause() {
+        print("PlayerManager.pause() 被调用, vlcPlayer是否为nil: \(vlcPlayer == nil)")
+        if vlcPlayer == nil {
+            addLog("错误: VLC播放器未就绪", type: .error)
+            return
+        }
         vlcPlayer?.pause()
         isPlaying = false
         addLog("暂停", type: .info)
@@ -518,6 +530,8 @@ class PlayerManager: ObservableObject {
     // 直接切换音轨（原唱/伴唱）
     func switchVocalMode(_ mode: String) {
         vocalMode = mode
+        print("PlayerManager.switchVocalMode() 被调用, mode: \(mode), vlcPlayer是否为nil: \(vlcPlayer == nil)")
+        
         guard let player = vlcPlayer else {
             addLog("VLC播放器未就绪", type: .error)
             return
@@ -526,17 +540,39 @@ class PlayerManager: ObservableObject {
         let targetIndex: Int32 = (mode == "original") ? 1 : 0
         addLog("切换音轨到: \(mode) (索引\(targetIndex))", type: .info)
         
+        // 打印可用音轨
+        if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
+            addLog("可用音轨: \(trackNames)", type: .info)
+            print("可用音轨: \(trackNames)")
+        }
+        
+        // 打印当前音轨
+        if let currentTrack = player.value(forKey: "audioTrackIndex") as? Int32 {
+            print("当前音轨索引: \(currentTrack)")
+        }
+        
         // 方法1：通过audio对象设置trackNumber
         if let audio = player.value(forKey: "audio") as AnyObject? {
             audio.setValue(targetIndex, forKey: "trackNumber")
+            print("方法1: audio.trackNumber = \(targetIndex)")
+        } else {
+            print("方法1失败: 无法获取audio对象")
         }
         
         // 方法2：KVC设置audioTrackIndex
         player.setValue(targetIndex, forKey: "audioTrackIndex")
+        print("方法2: audioTrackIndex = \(targetIndex)")
         
-        // 打印可用音轨
-        if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
-            addLog("可用音轨: \(trackNames)", type: .info)
+        // 方法3：尝试直接设置audio.trackNumber（通过键路径）
+        player.setValue(targetIndex, forKeyPath: "audio.trackNumber")
+        print("方法3: audio.trackNumber (键路径) = \(targetIndex)")
+        
+        // 延迟验证
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if let currentTrack = player.value(forKey: "audioTrackIndex") as? Int32 {
+                print("0.5秒后验证 - 当前音轨索引: \(currentTrack), 目标: \(targetIndex)")
+                self.addLog("音轨验证: 当前\(currentTrack)/目标\(targetIndex)", type: .info)
+            }
         }
     }
     
@@ -1125,10 +1161,11 @@ struct PlayerView: View {
                         }
                     }
                 },
-                onPlayerReady: { player in
+                onPlayerReady: { [weak self] player in
                     // 将VLC播放器引用传递给PlayerManager，用于直接控制播放/暂停/音轨
-                    self.playerManager.vlcPlayer = player
-                    print("VLC播放器就绪，已传递给PlayerManager")
+                    print("PlayerView.onPlayerReady - 被调用, player是否为nil: \(player == nil)")
+                    self?.playerManager.vlcPlayer = player
+                    print("PlayerView.onPlayerReady - 已设置playerManager.vlcPlayer, 是否为nil: \(self?.playerManager.vlcPlayer == nil)")
                 }
             )
             .ignoresSafeArea()
