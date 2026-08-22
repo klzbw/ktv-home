@@ -350,7 +350,7 @@ func applyVocalMode(player: VLCMediaPlayer, mode: String) {
     
     // 方法1：直接访问audio对象并设置trackNumber（MobileVLCKit标准API）
     // VLCMediaPlayer.audio 是 VLCAudio 对象，有 trackNumber 属性
-    if let audio = player.value(forKey: "audio") {
+    if let audio = player.value(forKey: "audio") as AnyObject? {
         audio.setValue(targetIndex, forKey: "trackNumber")
         print("方法1成功: audio.trackNumber = \(targetIndex)")
     } else {
