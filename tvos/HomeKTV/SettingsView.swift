@@ -2,50 +2,66 @@ import SwiftUI
 
 struct SettingsView: View {
     @StateObject private var config = ServerConfig.shared
-    @Environment(\.dismiss) private var dismiss
+    @Binding var showSettings: Bool
     @State private var address: String = ""
 
     var body: some View {
-        NavigationStack {
+        VStack(spacing: 30) {
+            Text("设置")
+                .font(.largeTitle)
+                .bold()
+                .padding(.top, 40)
+
             Form {
-                Section("服务端配置") {
+                Section(header: Text("服务端配置")) {
                     TextField("例如: 192.168.1.100:8080", text: $address)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .onAppear {
                             address = config.serverAddress
                         }
-
-                    Button("保存并连接") {
-                        config.serverAddress = address
-                        dismiss()
-                    }
-                    .disabled(address.isEmpty)
-                }
-
-                Section("关于") {
-                    LabeledContent("应用名称", value: "家庭KTV")
-                    LabeledContent("版本", value: "1.0.0")
-                    LabeledContent("平台", value: "tvOS")
                 }
 
                 Section {
-                    Button(role: .destructive) {
+                    Button(action: {
+                        config.serverAddress = address
+                        showSettings = false
+                    }) {
+                        HStack {
+                            Spacer()
+                            Text("保存并连接")
+                                .bold()
+                            Spacer()
+                        }
+                    }
+                    .disabled(address.isEmpty)
+
+                    Button(action: {
+                        showSettings = false
+                    }) {
+                        HStack {
+                            Spacer()
+                            Text("取消")
+                            Spacer()
+                        }
+                    }
+
+                    Button(role: .destructive, action: {
                         config.serverAddress = ""
-                        dismiss()
-                    } label: {
-                        Label("清除配置", systemImage: "trash")
+                        showSettings = false
+                    }) {
+                        HStack {
+                            Spacer()
+                            Text("清除配置")
+                            Spacer()
+                        }
                     }
                 }
             }
-            .navigationTitle("设置")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
-                        dismiss()
-                    }
-                }
-            }
+            .padding(.horizontal, 40)
+
+            Spacer()
         }
+        .background(Color(UIColor.systemBackground))
     }
 }

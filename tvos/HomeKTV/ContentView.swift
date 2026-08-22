@@ -19,9 +19,12 @@ struct ContentView: View {
             } else {
                 SetupView(showSettings: $showSettings)
             }
-        }
-        .fullScreenCover(isPresented: $showSettings) {
-            SettingsView()
+
+            if showSettings {
+                SettingsView(showSettings: $showSettings)
+                    .background(Color.black.opacity(0.8))
+                    .edgesIgnoringSafeArea(.all)
+            }
         }
         .onLongPressGesture(minimumDuration: 1.5) {
             showSettings = true
@@ -85,10 +88,13 @@ struct SetupView: View {
                 .foregroundColor(.secondary)
 
             Button(action: { showSettings = true }) {
-                Label("配置服务端", systemImage: "gear")
-                    .font(.title2)
-                    .padding(.horizontal, 40)
-                    .padding(.vertical, 16)
+                HStack {
+                    Image(systemName: "gear")
+                    Text("配置服务端")
+                }
+                .font(.title2)
+                .padding(.horizontal, 40)
+                .padding(.vertical, 16)
             }
             .buttonStyle(.borderedProminent)
         }
