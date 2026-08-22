@@ -336,7 +336,7 @@ class PlayerManager: ObservableObject {
         wsManager.onEffectChanged = { _ in }
         wsManager.onPlaybackRestarted = { [weak self] in
             if let song = self?.currentSong {
-                self?.addLog("播放重启: \(song.title)", .info)
+                self?.addLog("播放重启: \(song.title)", type: .info)
                 self?.videoURL = nil
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(song.id)")
@@ -376,14 +376,14 @@ class PlayerManager: ObservableObject {
                     
                     if let playing = queue.playing {
                         if self?.currentSong?.id != playing.song.id {
-                            self?.addLog("检测到新歌: \(playing.song.title) - \(playing.song.artist) (ID: \(playing.song.id))", .info)
+                            self?.addLog("检测到新歌: \(playing.song.title) - \(playing.song.artist) (ID: \(playing.song.id))", type: .info)
                             self?.currentSong = playing.song
                             self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(playing.song.id)")
                         }
                         self?.showIdleScreen = false
                     } else {
                         if self?.currentSong != nil {
-                            self?.addLog("播放队列为空", .info)
+                            self?.addLog("播放队列为空", type: .info)
                             self?.currentSong = nil
                             self?.videoURL = nil
                         }
