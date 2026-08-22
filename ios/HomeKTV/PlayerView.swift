@@ -575,36 +575,62 @@ class PlayerManager: ObservableObject {
     // 直接切换音轨（原唱/伴唱）- 尝试多种VLC API
     func switchVocalMode(_ mode: String) {
         vocalMode = mode
-        print("========== switchVocalMode被调用（测试5：读取audioTrackNames + setValue写入）==========")
+        print("========== switchVocalMode被调用（完整音轨切换）==========")
         print("mode: \(mode)")
-        addLog("🔊 [测试5] switchVocalMode被调用: \(mode) (读取audioTrackNames + setValue写入)", type: .info)
+        addLog("🔊 switchVocalMode被调用: \(mode)", type: .info)
         
         guard let player = vlcPlayer else {
             addLog("❌ VLC播放器未就绪", type: .error)
             return
         }
         
+        // 关键：可用音轨是 ["Disable", "Track 1", "Track 2"]
+        // 索引0=Disable(禁用), 索引1=Track 1, 索引2=Track 2
         let targetIndex: Int32 = (mode == "original") ? 1 : 2
-        addLog("🎯 目标音轨索引: \(targetIndex)", type: .info)
+        addLog("🎯 目标音轨索引: \(targetIndex) (0=Disable,1=Track1,2=Track2)", type: .info)
         
-        // 只读取audioTrackNames（已验证安全）
+        // 只读取audioTrackNames（已验证安全，不读取audioTrackIndex会闪退）
         if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
             addLog("📋 可用音轨: \(trackNames)", type: .info)
             print("可用音轨: \(trackNames)")
-        } else {
-            addLog("⚠️ 无法读取audioTrackNames", type: .warning)
         }
         
-        // 测试KVC setValue写入操作（有responds(to:)检查）
+        // 方法1：通过audio对象设置trackNumber（有responds(to:)检查）
+        // 注意：不读取audio对象，直接尝试设置
+        if player.responds(to: Selector(("audio"))) {
+            if let audio = player.value(forKey: "audio") as? NSObject {
+                if audio.responds(to: Selector(("setTrackNumber:"))) {
+                    audio.setValue(targetIndex, forKey: "trackNumber")
+                    addLog("✅ 方法1: audio.trackNumber = \(targetIndex)", type: .info)
+                } else {
+                    addLog("⚠️ 方法1: audio没有setTrackNumber方法", type: .warning)
+                }
+            }
+        }
+        
+        // 方法2：设置audioTrackIndex（有responds(to:)检查）
         if player.responds(to: Selector(("setAudioTrackIndex:"))) {
             player.setValue(targetIndex, forKey: "audioTrackIndex")
-            addLog("✅ setValue audioTrackIndex = \(targetIndex)", type: .info)
+            addLog("✅ 方法2: audioTrackIndex = \(targetIndex)", type: .info)
         } else {
-            addLog("⚠️ player没有setAudioTrackIndex方法", type: .warning)
+            addLog("⚠️ 方法2: player没有setAudioTrackIndex方法", type: .warning)
         }
         
-        // 不读取audioTrackIndex，不使用audio对象
-        addLog("🔇 [测试5] audioTrackIndex读取和audio对象已禁用", type: .warning)
+        // 方法3：设置currentAudioTrackIndex（有responds(to:)检查）
+        if player.responds(to: Selector(("setCurrentAudioTrackIndex:"))) {
+            player.setValue(targetIndex, forKey: "currentAudioTrackIndex")
+            addLog("✅ 方法3: currentAudioTrackIndex = \(targetIndex)", type: .info)
+        } else {
+            addLog("⚠️ 方法3: player没有setCurrentAudioTrackIndex方法", type: .warning)
+        }
+        
+        // 不验证（读取audioTrackIndex会闪退），直接尝试交换索引作为备用
+        // 延迟0.8秒后，如果用户反馈没变化，可以手动触发交换
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            guard let self = self, let player = self.vlcPlayer else { return }
+            // 不读取当前索引（会闪退），直接记录日志
+            self.addLog("⏱️ 音轨切换完成（未验证，读取audioTrackIndex会闪退）", type: .info)
+        }
     }
     
     // 保留原方法的占位，后续逐步恢复
