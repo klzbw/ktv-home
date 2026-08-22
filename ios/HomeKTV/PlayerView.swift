@@ -616,7 +616,6 @@ class PlayerManager: ObservableObject {
         // 关键修复：可用音轨是 ["Disable", "Track 1", "Track 2"]
         // 索引0=Disable(禁用), 索引1=Track 1, 索引2=Track 2
         // 所以原唱和伴唱应该用索引1和2，而不是0和1！
-        // 从日志看，只有方法3(currentAudioTrackIndex)有效
         let targetIndex: Int32 = (mode == "original") ? 1 : 2
         addLog("🎯 目标音轨索引: \(targetIndex) (0=Disable,1=Track1,2=Track2)", type: .info)
         
@@ -632,12 +631,32 @@ class PlayerManager: ObservableObject {
             print("当前音轨索引: \(currentTrack)")
         }
         
-        // 只使用方法3：currentAudioTrackIndex（从日志看这是唯一有效的方法）
+        // 方法1：通过audio对象设置trackNumber（有安全检查）
+        if let audio = player.value(forKey: "audio") as? NSObject {
+            if audio.responds(to: Selector(("setTrackNumber:"))) {
+                audio.setValue(targetIndex, forKey: "trackNumber")
+                addLog("✅ 方法1: audio.trackNumber = \(targetIndex)", type: .info)
+            } else {
+                addLog("⚠️ 方法1: audio没有setTrackNumber方法", type: .warning)
+            }
+        } else {
+            addLog("⚠️ 方法1: 无法获取audio对象", type: .warning)
+        }
+        
+        // 方法2：设置audioTrackIndex（有安全检查）
+        if player.responds(to: Selector(("setAudioTrackIndex:"))) {
+            player.setValue(targetIndex, forKey: "audioTrackIndex")
+            addLog("✅ 方法2: audioTrackIndex = \(targetIndex)", type: .info)
+        } else {
+            addLog("⚠️ 方法2: player没有setAudioTrackIndex方法", type: .warning)
+        }
+        
+        // 方法3：设置currentAudioTrackIndex（有安全检查）
         if player.responds(to: Selector(("setCurrentAudioTrackIndex:"))) {
             player.setValue(targetIndex, forKey: "currentAudioTrackIndex")
-            addLog("✅ 设置currentAudioTrackIndex = \(targetIndex)", type: .info)
+            addLog("✅ 方法3: currentAudioTrackIndex = \(targetIndex)", type: .info)
         } else {
-            addLog("❌ player没有setCurrentAudioTrackIndex方法", type: .error)
+            addLog("⚠️ 方法3: player没有setCurrentAudioTrackIndex方法", type: .warning)
         }
         
         // 延迟验证，如果失败则自动交换索引
@@ -651,6 +670,15 @@ class PlayerManager: ObservableObject {
                 if currentTrack != targetIndex {
                     self.addLog("⚠️ 音轨切换未生效，尝试交换索引", type: .warning)
                     let swappedIndex: Int32 = (mode == "original") ? 2 : 1
+                    // 尝试所有方法（都有安全检查）
+                    if let audio = player.value(forKey: "audio") as? NSObject {
+                        if audio.responds(to: Selector(("setTrackNumber:"))) {
+                            audio.setValue(swappedIndex, forKey: "trackNumber")
+                        }
+                    }
+                    if player.responds(to: Selector(("setAudioTrackIndex:"))) {
+                        player.setValue(swappedIndex, forKey: "audioTrackIndex")
+                    }
                     if player.responds(to: Selector(("setCurrentAudioTrackIndex:"))) {
                         player.setValue(swappedIndex, forKey: "currentAudioTrackIndex")
                     }
