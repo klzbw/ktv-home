@@ -1098,6 +1098,28 @@ struct PlayerView: View {
                 .zIndex(100)
             }
             
+            // 原唱/伴唱状态提示（顶部居中，明显显示）
+            VStack {
+                HStack {
+                    Spacer()
+                    Text(playerManager.vocalMode == "original" ? "🎤 原唱" : "🎵 伴唱")
+                        .font(.system(size: 20, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule()
+                                .fill(playerManager.vocalMode == "original" ? Color.orange.opacity(0.8) : Color.blue.opacity(0.8))
+                        )
+                        .padding(.top, 50)
+                    Spacer()
+                }
+                Spacer()
+            }
+            .allowsHitTesting(false)
+            .zIndex(50)
+            .animation(.easeInOut(duration: 0.3), value: playerManager.vocalMode)
+            
             // 调试按钮（右上角）
             VStack {
                 HStack {
