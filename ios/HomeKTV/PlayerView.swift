@@ -604,8 +604,11 @@ class PlayerManager: ObservableObject {
     // 直接切换音轨（原唱/伴唱）- 尝试多种VLC API
     func switchVocalMode(_ mode: String) {
         vocalMode = mode
-        print("PlayerManager.switchVocalMode() 被调用, mode: \(mode), vlcPlayer是否为nil: \(vlcPlayer == nil)")
-        addLog("🔊 switchVocalMode被调用: \(mode), VLC就绪: \(vlcPlayer != nil)", type: .info)
+        print("========== switchVocalMode被调用 ==========")
+        print("mode: \(mode)")
+        print("vlcPlayer是否为nil: \(vlcPlayer == nil)")
+        addLog("🔊🔊🔊 switchVocalMode被调用: \(mode)", type: .info)
+        addLog("VLC播放器就绪: \(vlcPlayer != nil)", type: .info)
         
         guard let player = vlcPlayer else {
             addLog("❌ VLC播放器未就绪", type: .error)
@@ -684,13 +687,16 @@ class PlayerManager: ObservableObject {
     func configure(host: String, port: Int) {
         self.host = host
         self.port = port
-        addLog("配置: http://\(host):\(port)")
+        addLog("📋 configure被调用: http://\(host):\(port)", type: .info)
+        addLog("设置onVocalChanged回调", type: .info)
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.wsManager.connect(host: host, port: port)
         }
         
         wsManager.onVocalChanged = { [weak self] mode in
+            print("onVocalChanged回调被调用: \(mode)")
+            self?.addLog("📞 onVocalChanged回调: \(mode)", type: .info)
             DispatchQueue.main.async {
                 self?.switchVocalMode(mode)
             }
@@ -1076,11 +1082,12 @@ struct DebugPanelView: View {
                     }
                     
                     Divider()
-                        .background(Color.gray)
+                        .background(Color.orange)
+                        .padding(.vertical, 8)
                     
-                    Text("播放器日志:")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.white)
+                    Text("===== 播放器日志 =====")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.orange)
                     
                     ForEach(playerManager.debugLogs) { log in
                         HStack(alignment: .top) {
