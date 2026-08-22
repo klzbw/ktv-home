@@ -51,7 +51,7 @@ Home KTV 是一套运行在家庭 NAS 或 Linux 主机上的局域网点歌系�
 - 逐行 LRC 与增强 LRC 逐字歌词
 - 鼓掌、欢呼、倒彩、干杯等现场音效
 
-### Android TV 播放
+### Android TV（Apple TV）） 播放
 
 - 播放 MP4、MKV、MPEG、MP3、FLAC 等常见媒体
 - 支持 MPEG-2、MP2 和双音轨 KTV 视频
