@@ -143,6 +143,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
     var onVocalChanged: ((String) -> Void)?
     var onEffectChanged: ((KTVEffect) -> Void)?
     var onPlaybackRestarted: (() -> Void)?
+    var onPlaybackControl: ((String) -> Void)?
     
     private func addLog(_ message: String, type: DebugLogEntry.LogType = .info) {
         let formatter = DateFormatter()
@@ -243,6 +244,10 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                 vocalMode = mode
                 onVocalChanged?(mode)
             }
+        case "play", "pause", "playback_state", "toggle_playback":
+            let state = payload?["state"] as? String ?? type
+            addLog("播放控制: \(state)")
+            onPlaybackControl?(state)
         case "effect", "effect_play", "play_effect", "atmosphere", "ambiance":
             var effectStr: String?
             if let e = payload?["effect"] as? String {
@@ -341,40 +346,24 @@ func applyVocalMode(player: VLCMediaPlayer, mode: String) {
     // KTV mkv文件通常有2个音轨：
     // 音轨0 = 伴奏（accompaniment）
     // 音轨1 = 原唱（original）
-    // 但有些文件可能相反，所以尝试两种
     let targetIndex: Int32 = (mode == "original") ? 1 : 0
     
-    // 方法1：直接通过audio对象设置trackNumber（最可靠）
-    if let audio = player.value(forKey: "audio") as? NSObject {
+    // 方法1：直接访问audio对象并设置trackNumber（MobileVLCKit标准API）
+    // VLCMediaPlayer.audio 是 VLCAudio 对象，有 trackNumber 属性
+    if let audio = player.value(forKey: "audio") {
         audio.setValue(targetIndex, forKey: "trackNumber")
-        print("方法1: audio.trackNumber = \(targetIndex)")
+        print("方法1成功: audio.trackNumber = \(targetIndex)")
+    } else {
+        print("方法1失败: 无法获取audio对象")
     }
     
-    // 方法2：KVC设置audioTrackIndex
+    // 方法2：KVC设置audioTrackIndex（备用）
     player.setValue(targetIndex, forKey: "audioTrackIndex")
-    print("方法2: audioTrackIndex = \(targetIndex)")
+    print("方法2: audioTrackIndex KVC = \(targetIndex)")
     
-    // 方法3：如果方法1和2都无效，尝试反向索引（有些文件0=原唱,1=伴奏）
-    // 延迟0.3秒后检查是否生效，如果没生效则尝试反向
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-        var currentIndex: Int32 = -1
-        if let audio = player.value(forKey: "audio") as? NSObject {
-            if let idx = audio.value(forKey: "trackNumber") as? Int32 {
-                currentIndex = idx
-            }
-        }
-        
-        print("0.3秒后当前音轨: \(currentIndex), 目标: \(targetIndex)")
-        
-        // 如果当前音轨不等于目标音轨，尝试反向索引
-        if currentIndex != targetIndex && currentIndex != -1 {
-            let reverseIndex: Int32 = (targetIndex == 0) ? 1 : 0
-            print("尝试反向索引: \(reverseIndex)")
-            if let audio = player.value(forKey: "audio") as? NSObject {
-                audio.setValue(reverseIndex, forKey: "trackNumber")
-            }
-            player.setValue(reverseIndex, forKey: "audioTrackIndex")
-        }
+    // 打印可用音轨列表（调试用）
+    if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
+        print("可用音轨: \(trackNames)")
     }
     
     print("========== 音轨切换结束 ==========")
@@ -385,6 +374,7 @@ struct VLCVideoView: UIViewRepresentable {
     let url: URL?
     let songId: Int?
     let vocalMode: String  // "original" 或 "accompaniment"
+    let playbackCommand: String  // "play", "pause", "toggle"
     let onLog: ((String, DebugLogEntry.LogType) -> Void)?
     
     func makeUIView(context: Context) -> UIView {
@@ -478,6 +468,7 @@ struct VLCVideoView: UIViewRepresentable {
         var lastURL: URL?
         var lastSongId: Int?
         var lastVocalMode: String = "accompaniment"
+        var lastPlaybackCommand: String = ""
     }
 }
 
@@ -488,6 +479,8 @@ class PlayerManager: ObservableObject {
     @Published var videoURL: URL?
     @Published var vocalMode: String = "accompaniment"
     @Published var debugLogs: [DebugLogEntry] = []
+    @Published var isPlaying: Bool = false
+    @Published var playbackCommand: String = ""  // "play", "pause", "toggle"
     
     let wsManager = WebSocketManager()
     private var timer: Timer?
@@ -520,6 +513,18 @@ class PlayerManager: ObservableObject {
             self?.vocalMode = mode
         }
         wsManager.onEffectChanged = { _ in }
+        wsManager.onPlaybackControl = { [weak self] command in
+            DispatchQueue.main.async {
+                self?.playbackCommand = command
+                if command == "play" {
+                    self?.isPlaying = true
+                } else if command == "pause" {
+                    self?.isPlaying = false
+                } else if command == "toggle" {
+                    self?.isPlaying.toggle()
+                }
+            }
+        }
         wsManager.onPlaybackRestarted = { [weak self] in
             if let song = self?.currentSong {
                 self?.addLog("播放重启: \(song.title)", type: .info)
@@ -1067,6 +1072,7 @@ struct PlayerView: View {
                 url: playerManager.videoURL,
                 songId: playerManager.currentSong?.id,
                 vocalMode: playerManager.vocalMode,
+                playbackCommand: playerManager.playbackCommand,
                 onLog: { message, type in
                     let formatter = DateFormatter()
                     formatter.dateFormat = "HH:mm:ss"
