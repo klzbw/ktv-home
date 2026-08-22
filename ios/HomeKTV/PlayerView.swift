@@ -131,21 +131,28 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
             case .success(let message):
                 switch message {
                 case .string(let text):
-                    self.lastMessage = text
-                    self.addLog("收到: \(text)", type: .websocket)
-                    self.handleMessage(text)
+                    // 确保UI更新在主线程
+                    DispatchQueue.main.async {
+                        self.lastMessage = text
+                        self.addLog("收到: \(text)", type: .websocket)
+                        self.handleMessage(text)
+                    }
                 case .data(let data):
                     if let text = String(data: data, encoding: .utf8) {
-                        self.lastMessage = text
-                        self.addLog("收到(data): \(text)", type: .websocket)
-                        self.handleMessage(text)
+                        DispatchQueue.main.async {
+                            self.lastMessage = text
+                            self.addLog("收到(data): \(text)", type: .websocket)
+                            self.handleMessage(text)
+                        }
                     }
                 @unknown default:
                     break
                 }
             case .failure(let error):
-                self.addLog("WebSocket错误: \(error.localizedDescription)", type: .error)
-                self.isConnected = false
+                DispatchQueue.main.async {
+                    self.addLog("WebSocket错误: \(error.localizedDescription)", type: .error)
+                    self.isConnected = false
+                }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     self?.connect(host: self?.host ?? "", port: self?.port ?? 8980)
                 }
@@ -165,10 +172,8 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
         
         let payload = json["payload"] as? [String: Any]
         
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            switch type {
+        // 已经在主线程执行，不需要再DispatchQueue.main.async
+        switch type {
             case "pong":
                 self.isConnected = true
             case "vocal_changed":
@@ -211,7 +216,6 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                 self.addLog("未处理: \(type)", type: .warning)
                 break
             }
-        }
     }
     
     private func startPing() {
