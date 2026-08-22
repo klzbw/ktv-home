@@ -575,9 +575,9 @@ class PlayerManager: ObservableObject {
     // 直接切换音轨（原唱/伴唱）- 尝试多种VLC API
     func switchVocalMode(_ mode: String) {
         vocalMode = mode
-        print("========== switchVocalMode被调用（测试2：仅audioTrackNames读取）==========")
+        print("========== switchVocalMode被调用（测试3：audioTrackNames + audioTrackIndex读取）==========")
         print("mode: \(mode)")
-        addLog("🔊 [测试2] switchVocalMode被调用: \(mode) (仅audioTrackNames读取)", type: .info)
+        addLog("🔊 [测试3] switchVocalMode被调用: \(mode) (audioTrackNames + audioTrackIndex读取)", type: .info)
         
         guard let player = vlcPlayer else {
             addLog("❌ VLC播放器未就绪", type: .error)
@@ -587,7 +587,7 @@ class PlayerManager: ObservableObject {
         let targetIndex: Int32 = (mode == "original") ? 1 : 2
         addLog("🎯 目标音轨索引: \(targetIndex)", type: .info)
         
-        // 只测试读取操作1：audioTrackNames（不使用do-catch，直接可选绑定）
+        // 读取操作1：audioTrackNames
         if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
             addLog("📋 可用音轨: \(trackNames)", type: .info)
             print("可用音轨: \(trackNames)")
@@ -595,8 +595,16 @@ class PlayerManager: ObservableObject {
             addLog("⚠️ 无法读取audioTrackNames", type: .warning)
         }
         
-        // 其他读取操作和写入操作都禁用
-        addLog("🔇 [测试2] 其他读取和写入操作已禁用", type: .warning)
+        // 读取操作2：audioTrackIndex
+        if let currentTrack = player.value(forKey: "audioTrackIndex") as? Int32 {
+            addLog("📊 当前音轨索引: \(currentTrack)", type: .info)
+            print("当前音轨索引: \(currentTrack)")
+        } else {
+            addLog("⚠️ 无法读取audioTrackIndex", type: .warning)
+        }
+        
+        // audio对象读取和所有写入操作都禁用
+        addLog("🔇 [测试3] audio对象读取和写入操作已禁用", type: .warning)
     }
     
     // 保留原方法的占位，后续逐步恢复
