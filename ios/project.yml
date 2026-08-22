@@ -1,0 +1,30 @@
+name: HomeKTV
+options:
+  bundleIdPrefix: com.homektv
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    ENABLE_BITCODE: NO
+    CODE_SIGN_STYLE: Automatic
+    PRODUCT_BUNDLE_IDENTIFIER: com.homektv.ios
+    TARGETED_DEVICE_FAMILY: "1,2"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    ONLY_ACTIVE_ARCH: NO
+targets:
+  HomeKTV:
+    type: application
+    platform: iOS
+    sources:
+      - path: HomeKTV
+    settings:
+      base:
+        PRODUCT_NAME: HomeKTV
+        PRODUCT_BUNDLE_IDENTIFIER: com.homektv.ios
+        INFOPLIST_FILE: HomeKTV/Info.plist
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        PROVISIONING_PROFILE_SPECIFIER: ""

@@ -1,0 +1,66 @@
+name: iOS Build IPA
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/ios-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode Project
+        run: |
+          cd ios
+          xcodegen generate
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build for iOS (Release)
+        run: |
+          cd ios
+          xcodebuild archive             -project HomeKTV.xcodeproj             -scheme HomeKTV             -configuration Release             -destination 'generic/platform=iOS'             -archivePath build/HomeKTV.xcarchive             CODE_SIGN_IDENTITY=""             CODE_SIGNING_REQUIRED=NO             CODE_SIGNING_ALLOWED=NO
+
+      - name: Export IPA (unsigned)
+        run: |
+          cd ios
+          mkdir -p build/ipa
+          xcodebuild -exportArchive             -archivePath build/HomeKTV.xcarchive             -exportPath build/ipa             -exportOptionsPlist <(echo '<?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+              <key>method</key>
+              <string>development</string>
+              <key>compileBitcode</key>
+              <false/>
+              <key>uploadSymbols</key>
+              <false/>
+            </dict>
+            </plist>')             CODE_SIGN_IDENTITY=""             CODE_SIGNING_REQUIRED=NO             CODE_SIGNING_ALLOWED=NO || true
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HomeKTV-iOS-ipa
+          path: ios/build/ipa/*.ipa
+          if-no-files-found: error
+
+      - name: Create Release
+        if: github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ios-v1.0.${{ github.run_number }}
+          name: iOS v1.0.${{ github.run_number }}
+          files: ios/build/ipa/*.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
