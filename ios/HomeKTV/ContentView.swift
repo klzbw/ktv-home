@@ -6,19 +6,16 @@ struct ContentView: View {
     @State private var showSettings = false
 
     var body: some View {
-        ZStack {
+        Group {
             if let url = config.serverURL {
                 WebView(url: url)
                     .edgesIgnoringSafeArea(.all)
             } else {
                 SetupView(showSettings: $showSettings)
             }
-
-            if showSettings {
-                SettingsView(showSettings: $showSettings)
-                    .background(Color.black.opacity(0.8))
-                    .edgesIgnoringSafeArea(.all)
-            }
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(showSettings: $showSettings)
         }
         .onLongPressGesture(minimumDuration: 1.5) {
             showSettings = true
