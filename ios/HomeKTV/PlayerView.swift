@@ -391,7 +391,7 @@ class PlayerManager: ObservableObject {
                     }
                 }
             } catch {
-                self?.addLog("队列解析失败: \(error.localizedDescription)", .error)
+                self?.addLog("队列解析失败: \(error.localizedDescription)", type: .error)
             }
         }.resume()
     }
