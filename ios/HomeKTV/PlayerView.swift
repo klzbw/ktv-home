@@ -572,6 +572,66 @@ class PlayerManager: ObservableObject {
         }
     }
     
+    // MARK: - 音量控制
+    func setVolume(_ volume: Int32) {
+        guard let player = vlcPlayer else {
+            addLog("❌ VLC播放器未就绪，无法设置音量", type: .error)
+            return
+        }
+        
+        let safeVolume = max(0, min(100, volume))
+        addLog("🔊 设置音量: \(safeVolume)", type: .info)
+        
+        // 方法1：通过audio对象设置volume（有responds(to:)检查）
+        if player.responds(to: Selector(("audio"))) {
+            if let audio = player.value(forKey: "audio") as? NSObject {
+                if audio.responds(to: Selector(("setVolume:"))) {
+                    audio.setValue(safeVolume, forKey: "volume")
+                    addLog("✅ 方法1: audio.volume = \(safeVolume)", type: .info)
+                } else {
+                    addLog("⚠️ 方法1: audio没有setVolume方法", type: .warning)
+                }
+            }
+        }
+        
+        // 方法2：直接设置player.volume（有responds(to:)检查）
+        if player.responds(to: Selector(("setVolume:"))) {
+            player.setValue(safeVolume, forKey: "volume")
+            addLog("✅ 方法2: player.volume = \(safeVolume)", type: .info)
+        } else {
+            addLog("⚠️ 方法2: player没有setVolume方法", type: .warning)
+        }
+    }
+    
+    func setMuted(_ muted: Bool) {
+        guard let player = vlcPlayer else {
+            addLog("❌ VLC播放器未就绪，无法设置静音", type: .error)
+            return
+        }
+        
+        addLog("🔇 设置静音: \(muted)", type: .info)
+        
+        // 方法1：通过audio对象设置muted（有responds(to:)检查）
+        if player.responds(to: Selector(("audio"))) {
+            if let audio = player.value(forKey: "audio") as? NSObject {
+                if audio.responds(to: Selector(("setMuted:"))) {
+                    audio.setValue(muted, forKey: "muted")
+                    addLog("✅ 方法1: audio.muted = \(muted)", type: .info)
+                } else {
+                    addLog("⚠️ 方法1: audio没有setMuted方法", type: .warning)
+                }
+            }
+        }
+        
+        // 方法2：直接设置player.muted（有responds(to:)检查）
+        if player.responds(to: Selector(("setMuted:"))) {
+            player.setValue(muted, forKey: "muted")
+            addLog("✅ 方法2: player.muted = \(muted)", type: .info)
+        } else {
+            addLog("⚠️ 方法2: player没有setMuted方法", type: .warning)
+        }
+    }
+    
     // 直接切换音轨（原唱/伴唱）- 尝试多种VLC API
     func switchVocalMode(_ mode: String) {
         vocalMode = mode
@@ -634,92 +694,6 @@ class PlayerManager: ObservableObject {
     }
     
     // 保留原方法的占位，后续逐步恢复
-    func switchVocalModeOriginal(_ mode: String) {
-        vocalMode = mode
-        print("========== switchVocalMode被调用 ==========")
-        print("mode: \(mode)")
-        addLog("🔊 switchVocalMode被调用: \(mode)", type: .info)
-        
-        guard let player = vlcPlayer else {
-            addLog("❌ VLC播放器未就绪", type: .error)
-            return
-        }
-        
-        // 关键修复：可用音轨是 ["Disable", "Track 1", "Track 2"]
-        // 索引0=Disable(禁用), 索引1=Track 1, 索引2=Track 2
-        // 所以原唱和伴唱应该用索引1和2，而不是0和1！
-        let targetIndex: Int32 = (mode == "original") ? 1 : 2
-        addLog("🎯 目标音轨索引: \(targetIndex) (0=Disable,1=Track1,2=Track2)", type: .info)
-        
-        // 打印可用音轨
-        if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
-            addLog("📋 可用音轨: \(trackNames)", type: .info)
-            print("可用音轨: \(trackNames)")
-        }
-        
-        // 打印当前音轨
-        if let currentTrack = player.value(forKey: "audioTrackIndex") as? Int32 {
-            addLog("📊 当前音轨索引: \(currentTrack)", type: .info)
-            print("当前音轨索引: \(currentTrack)")
-        }
-        
-        // 方法1：通过audio对象设置trackNumber（有安全检查）
-        if let audio = player.value(forKey: "audio") as? NSObject {
-            if audio.responds(to: Selector(("setTrackNumber:"))) {
-                audio.setValue(targetIndex, forKey: "trackNumber")
-                addLog("✅ 方法1: audio.trackNumber = \(targetIndex)", type: .info)
-            } else {
-                addLog("⚠️ 方法1: audio没有setTrackNumber方法", type: .warning)
-            }
-        } else {
-            addLog("⚠️ 方法1: 无法获取audio对象", type: .warning)
-        }
-        
-        // 方法2：设置audioTrackIndex（有安全检查）
-        if player.responds(to: Selector(("setAudioTrackIndex:"))) {
-            player.setValue(targetIndex, forKey: "audioTrackIndex")
-            addLog("✅ 方法2: audioTrackIndex = \(targetIndex)", type: .info)
-        } else {
-            addLog("⚠️ 方法2: player没有setAudioTrackIndex方法", type: .warning)
-        }
-        
-        // 方法3：设置currentAudioTrackIndex（有安全检查）
-        if player.responds(to: Selector(("setCurrentAudioTrackIndex:"))) {
-            player.setValue(targetIndex, forKey: "currentAudioTrackIndex")
-            addLog("✅ 方法3: currentAudioTrackIndex = \(targetIndex)", type: .info)
-        } else {
-            addLog("⚠️ 方法3: player没有setCurrentAudioTrackIndex方法", type: .warning)
-        }
-        
-        // 延迟验证，如果失败则自动交换索引
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            guard let self = self, let player = self.vlcPlayer else { return }
-            if let currentTrack = player.value(forKey: "audioTrackIndex") as? Int32 {
-                print("0.8秒后验证 - 当前音轨索引: \(currentTrack), 目标: \(targetIndex)")
-                self.addLog("🔍 验证: 当前\(currentTrack)/目标\(targetIndex)", type: .info)
-                
-                // 如果验证失败，尝试交换音轨索引（可能Track1=伴奏，Track2=原唱）
-                if currentTrack != targetIndex {
-                    self.addLog("⚠️ 音轨切换未生效，尝试交换索引", type: .warning)
-                    let swappedIndex: Int32 = (mode == "original") ? 2 : 1
-                    // 尝试所有方法（都有安全检查）
-                    if let audio = player.value(forKey: "audio") as? NSObject {
-                        if audio.responds(to: Selector(("setTrackNumber:"))) {
-                            audio.setValue(swappedIndex, forKey: "trackNumber")
-                        }
-                    }
-                    if player.responds(to: Selector(("setAudioTrackIndex:"))) {
-                        player.setValue(swappedIndex, forKey: "audioTrackIndex")
-                    }
-                    if player.responds(to: Selector(("setCurrentAudioTrackIndex:"))) {
-                        player.setValue(swappedIndex, forKey: "currentAudioTrackIndex")
-                    }
-                    self.addLog("🔄 交换后尝试: \(swappedIndex)", type: .info)
-                }
-            }
-        }
-    }
-    
     func configure(host: String, port: Int) {
         self.host = host
         self.port = port
