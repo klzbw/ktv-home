@@ -145,6 +145,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
     var onPlaybackRestarted: (() -> Void)?
     var onPlaybackControl: ((String) -> Void)?
     var onStateSync: (([String: Any]) -> Void)?
+    var onVolumeChanged: ((Int, Bool) -> Void)?  // (volume, muted)
     
     private func addLog(_ message: String, type: DebugLogEntry.LogType = .info) {
         let formatter = DateFormatter()
