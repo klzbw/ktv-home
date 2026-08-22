@@ -358,7 +358,7 @@ struct VLCVideoView: UIViewRepresentable {
             
             // 延迟应用音轨模式（等待媒体加载完成）
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                applyVocalMode(player: player, mode: vocalMode)
+                VLCVideoView.applyVocalMode(player: player, mode: vocalMode)
             }
         }
         
