@@ -1,5 +1,6 @@
 import SwiftUI
 import MobileVLCKit
+import AVFoundation
 import Combine
 
 // MARK: - 数据模型
@@ -20,32 +21,69 @@ struct KTVQueue: Codable {
     let vocalMode: String?
 }
 
-// MARK: - 氛围效果类型
+// MARK: - 氛围效果类型（四种：鼓掌、欢呼、倒彩、干杯）
 enum KTVEffect: String {
     case applause = "applause"
+    case clap = "clap"
     case cheer = "cheer"
-    case laughter = "laughter"
-    case fireworks = "fireworks"
-    case whistle = "whistle"
-    case scream = "scream"
-    case bell = "bell"
-    case drum = "drum"
-    case cymbal = "cymbal"
+    case boo = "boo"
+    case hiss = "hiss"
+    case cheers = "cheers"
+    case toast = "toast"
     case unknown = "unknown"
     
     var displayName: String {
         switch self {
-        case .applause: return "鼓掌"
+        case .applause, .clap: return "鼓掌"
         case .cheer: return "欢呼"
-        case .laughter: return "笑声"
-        case .fireworks: return "烟花"
-        case .whistle: return "口哨"
-        case .scream: return "尖叫"
-        case .bell: return "铃声"
-        case .drum: return "鼓声"
-        case .cymbal: return "镲声"
+        case .boo, .hiss: return "倒彩"
+        case .cheers, .toast: return "干杯"
         case .unknown: return "氛围"
         }
+    }
+    
+    var iconName: String {
+        switch self {
+        case .applause, .clap: return "hands.clap"
+        case .cheer: return "person.3.fill"
+        case .boo, .hiss: return "hand.thumbsdown"
+        case .cheers, .toast: return "wineglass.fill"
+        case .unknown: return "star.fill"
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .applause, .clap: return .yellow
+        case .cheer: return .green
+        case .boo, .hiss: return .red
+        case .cheers, .toast: return .orange
+        case .unknown: return .white
+        }
+    }
+    
+    // 系统音效ID
+    var systemSoundID: SystemSoundID {
+        switch self {
+        case .applause, .clap: return 1104  // 短信收到
+        case .cheer: return 1306  // 收到邮件
+        case .boo, .hiss: return 1102  // 短信发送
+        case .cheers, .toast: return 1304  // 发送邮件
+        case .unknown: return 1100
+        }
+    }
+}
+
+// MARK: - 音效播放器
+class EffectSoundPlayer {
+    static let shared = EffectSoundPlayer()
+    
+    func playEffect(_ effect: KTVEffect) {
+        // 播放系统音效
+        AudioServicesPlaySystemSound(effect.systemSoundID)
+        
+        // 如果有自定义音效文件，可以在这里播放
+        // 目前使用系统音效作为替代
     }
 }
 
@@ -131,7 +169,6 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
             case .success(let message):
                 switch message {
                 case .string(let text):
-                    // 确保UI更新在主线程
                     DispatchQueue.main.async {
                         self.lastMessage = text
                         self.addLog("收到: \(text)", type: .websocket)
@@ -172,63 +209,64 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
         
         let payload = json["payload"] as? [String: Any]
         
-        // 已经在主线程执行，不需要再DispatchQueue.main.async
         switch type {
-            case "pong":
-                self.isConnected = true
-            case "vocal_changed":
-                if let mode = payload?["mode"] as? String {
-                    self.addLog("原唱/伴唱切换: \(mode)")
-                    self.vocalMode = mode
-                    self.onVocalChanged?(mode)
-                }
-            case "effect", "effect_play", "play_effect", "atmosphere", "ambiance":
-                // 尝试多种payload格式
-                var effectStr: String?
-                if let e = payload?["effect"] as? String {
-                    effectStr = e
-                } else if let e = payload?["type"] as? String {
-                    effectStr = e
-                } else if let e = payload?["name"] as? String {
-                    effectStr = e
-                } else if let e = payload?["value"] as? String {
-                    effectStr = e
-                } else if let e = payload?["effect_id"] as? String {
-                    effectStr = e
-                } else if let e = payload?["id"] as? String {
-                    effectStr = e
-                }
-                
-                self.addLog("氛围事件类型: \(type), payload: \(String(describing: payload))", type: .websocket)
-                
-                if let effectStr = effectStr {
-                    self.effectCount += 1
-                    self.addLog("氛围效果 #\(self.effectCount): \(effectStr)")
-                    let effect = KTVEffect(rawValue: effectStr) ?? .unknown
-                    self.currentEffect = effect
-                    self.showEffect = true
-                    self.onEffectChanged?(effect)
-                    
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                        self?.showEffect = false
-                    }
-                } else {
-                    self.addLog("氛围效果payload解析失败: \(String(describing: payload))", type: .warning)
-                    // 即使解析失败，也显示一个通用的氛围效果
-                    self.effectCount += 1
-                    self.currentEffect = .unknown
-                    self.showEffect = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                        self?.showEffect = false
-                    }
-                }
-            case "playback_restarted":
-                self.addLog("播放重启")
-                self.onPlaybackRestarted?()
-            default:
-                self.addLog("未处理: \(type)", type: .warning)
-                break
+        case "pong":
+            isConnected = true
+        case "vocal_changed":
+            if let mode = payload?["mode"] as? String {
+                addLog("原唱/伴唱切换: \(mode)")
+                vocalMode = mode
+                onVocalChanged?(mode)
             }
+        case "effect", "effect_play", "play_effect", "atmosphere", "ambiance":
+            var effectStr: String?
+            if let e = payload?["effect"] as? String {
+                effectStr = e
+            } else if let e = payload?["type"] as? String {
+                effectStr = e
+            } else if let e = payload?["name"] as? String {
+                effectStr = e
+            } else if let e = payload?["value"] as? String {
+                effectStr = e
+            } else if let e = payload?["effect_id"] as? String {
+                effectStr = e
+            } else if let e = payload?["id"] as? String {
+                effectStr = e
+            }
+            
+            addLog("氛围事件类型: \(type), payload: \(String(describing: payload))", type: .websocket)
+            
+            if let effectStr = effectStr {
+                effectCount += 1
+                addLog("氛围效果 #\(effectCount): \(effectStr)")
+                let effect = KTVEffect(rawValue: effectStr) ?? .unknown
+                currentEffect = effect
+                showEffect = true
+                onEffectChanged?(effect)
+                
+                // 播放音效
+                EffectSoundPlayer.shared.playEffect(effect)
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                    self?.showEffect = false
+                }
+            } else {
+                addLog("氛围效果payload解析失败", type: .warning)
+                effectCount += 1
+                currentEffect = .unknown
+                showEffect = true
+                EffectSoundPlayer.shared.playEffect(.unknown)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                    self?.showEffect = false
+                }
+            }
+        case "playback_restarted":
+            addLog("播放重启")
+            onPlaybackRestarted?()
+        default:
+            addLog("未处理: \(type)", type: .warning)
+            break
+        }
     }
     
     private func startPing() {
@@ -279,6 +317,7 @@ struct VLCVideoView: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let containerView = UIView()
         containerView.backgroundColor = .black
+        containerView.contentMode = .scaleAspectFit
         
         let player = VLCMediaPlayer()
         player.drawable = containerView
@@ -299,17 +338,14 @@ struct VLCVideoView: UIViewRepresentable {
     func updateUIView(_ uiView: UIView, context: Context) {
         guard let player = context.coordinator.player else { return }
         
-        // 歌曲ID变化时重新播放
         if let songId = songId, context.coordinator.lastSongId != songId {
             onLog?("切换歌曲ID: \(songId)", .info)
             context.coordinator.lastSongId = songId
             context.coordinator.lastURL = url
             
-            // 先停止旧播放
             player.stop()
             onLog?("停止旧播放", .info)
             
-            // 延迟开始新播放
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if let url = url {
                     let media = VLCMedia(url: url)
@@ -434,36 +470,58 @@ class PlayerManager: ObservableObject {
     }
 }
 
-// MARK: - 氛围效果覆盖层
+// MARK: - 氛围效果覆盖层（带动画）
 struct EffectOverlayView: View {
     let effect: KTVEffect
     let show: Bool
     let count: Int
+    
+    @State private var animate = false
+    @State private var pulse = false
     
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 if show {
                     // 半透明背景
-                    Color.black.opacity(0.6)
+                    Color.black.opacity(0.7)
                         .ignoresSafeArea()
+                    
+                    // 粒子效果背景
+                    ParticleBackgroundView(effect: effect)
                     
                     // 氛围效果内容 - 居中显示
                     VStack(spacing: 20) {
                         Spacer()
                         
-                        Image(systemName: effectIcon)
-                            .font(.system(size: 100))
-                            .foregroundColor(.yellow)
-                            .shadow(color: .yellow, radius: 15)
+                        // 图标 - 带脉冲动画
+                        Image(systemName: effect.iconName)
+                            .font(.system(size: 120))
+                            .foregroundColor(effect.color)
+                            .shadow(color: effect.color, radius: 20)
+                            .scaleEffect(animate ? 1.2 : 0.8)
+                            .rotationEffect(.degrees(animate ? 10 : -10))
+                            .animation(
+                                Animation.easeInOut(duration: 0.5)
+                                    .repeatForever(autoreverses: true),
+                                value: animate
+                            )
                         
+                        // 文字
                         Text(effect.displayName)
-                            .font(.system(size: 40, weight: .bold))
+                            .font(.system(size: 48, weight: .bold))
                             .foregroundColor(.white)
-                            .shadow(color: .black, radius: 2)
+                            .shadow(color: .black, radius: 3)
+                            .scaleEffect(pulse ? 1.1 : 1.0)
+                            .animation(
+                                Animation.spring(response: 0.3, dampingFraction: 0.5)
+                                    .repeatForever(autoreverses: true),
+                                value: pulse
+                            )
                         
+                        // 次数
                         Text("第 \(count) 次")
-                            .font(.system(size: 18))
+                            .font(.system(size: 20))
                             .foregroundColor(.white.opacity(0.8))
                         
                         Spacer()
@@ -473,23 +531,65 @@ struct EffectOverlayView: View {
                 }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
+            .onAppear {
+                animate = true
+                pulse = true
+            }
+            .onDisappear {
+                animate = false
+                pulse = false
+            }
         }
         .allowsHitTesting(false)
         .animation(.easeInOut(duration: 0.3), value: show)
     }
+}
+
+// MARK: - 粒子背景效果
+struct ParticleBackgroundView: View {
+    let effect: KTVEffect
+    @State private var particles: [Particle] = []
     
-    private var effectIcon: String {
-        switch effect {
-        case .applause: return "hands.clap"
-        case .cheer: return "person.3.fill"
-        case .laughter: return "face.smiling"
-        case .fireworks: return "sparkles"
-        case .whistle: return "wind"
-        case .scream: return "exclamationmark.triangle"
-        case .bell: return "bell.fill"
-        case .drum: return "hifispeaker.fill"
-        case .cymbal: return "circle.fill"
-        case .unknown: return "star.fill"
+    struct Particle: Identifiable {
+        let id = UUID()
+        let x: CGFloat
+        let y: CGFloat
+        let size: CGFloat
+        let opacity: Double
+        let speed: Double
+    }
+    
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                ForEach(particles) { particle in
+                    Circle()
+                        .fill(effect.color)
+                        .frame(width: particle.size, height: particle.size)
+                        .position(x: particle.x, y: particle.y)
+                        .opacity(particle.opacity)
+                        .animation(
+                            Animation.linear(duration: particle.speed)
+                                .repeatForever(autoreverses: false),
+                            value: particle.id
+                        )
+                }
+            }
+            .onAppear {
+                createParticles(in: geometry.size)
+            }
+        }
+    }
+    
+    private func createParticles(in size: CGSize) {
+        particles = (0..<30).map { _ in
+            Particle(
+                x: CGFloat.random(in: 0...size.width),
+                y: CGFloat.random(in: 0...size.height),
+                size: CGFloat.random(in: 5...20),
+                opacity: Double.random(in: 0.2...0.6),
+                speed: Double.random(in: 1...3)
+            )
         }
     }
 }
@@ -502,7 +602,6 @@ struct DebugPanelView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // 标题栏
             HStack {
                 Text("调试信息")
                     .font(.headline)
@@ -516,7 +615,6 @@ struct DebugPanelView: View {
             .padding()
             .background(Color.black.opacity(0.9))
             
-            // 状态信息
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     Group {
@@ -574,74 +672,133 @@ struct DebugPanelView: View {
     }
 }
 
-// MARK: - 扫码提示页面
+// MARK: - 扫码提示页面（适配横屏）
 struct IdleOverlayView: View {
     @ObservedObject var deviceManager: DeviceManager
     @ObservedObject var wsManager: WebSocketManager
     @State private var qrImage: UIImage?
     
     var body: some View {
-        ZStack {
-            LinearGradient(
-                gradient: Gradient(colors: [Color(red: 0.05, green: 0.05, blue: 0.15), Color(red: 0.1, green: 0.05, blue: 0.2)]),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
-            
-            VStack(spacing: 30) {
-                Text("家庭KTV")
-                    .font(.system(size: 48, weight: .bold))
-                    .foregroundColor(.white)
-                    .padding(.top, 40)
+        GeometryReader { geometry in
+            ZStack {
+                LinearGradient(
+                    gradient: Gradient(colors: [Color(red: 0.05, green: 0.05, blue: 0.15), Color(red: 0.1, green: 0.05, blue: 0.2)]),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
                 
-                Spacer()
-                
-                VStack(spacing: 16) {
-                    if let qrImage = qrImage {
-                        Image(uiImage: qrImage)
-                            .interpolation(.none)
-                            .resizable()
-                            .frame(width: 200, height: 200)
-                            .background(Color.white)
-                            .cornerRadius(12)
-                    } else {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.white)
-                            .frame(width: 200, height: 200)
-                            .overlay(ProgressView())
+                // 根据屏幕方向调整布局
+                if geometry.size.width > geometry.size.height {
+                    // 横屏布局
+                    HStack(spacing: 40) {
+                        VStack(spacing: 20) {
+                            Text("家庭KTV")
+                                .font(.system(size: 36, weight: .bold))
+                                .foregroundColor(.white)
+                            
+                            Spacer()
+                            
+                            HStack(spacing: 8) {
+                                Circle()
+                                    .fill(wsManager.isConnected ? Color.green : Color.red)
+                                    .frame(width: 8, height: 8)
+                                Text(wsManager.isConnected ? "遥控已连接" : "遥控未连接")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.gray)
+                            }
+                            
+                            Text("等待点歌中...")
+                                .font(.system(size: 14))
+                                .foregroundColor(.gray)
+                        }
+                        .frame(maxWidth: .infinity)
+                        
+                        VStack(spacing: 12) {
+                            if let qrImage = qrImage {
+                                Image(uiImage: qrImage)
+                                    .interpolation(.none)
+                                    .resizable()
+                                    .frame(width: 150, height: 150)
+                                    .background(Color.white)
+                                    .cornerRadius(12)
+                            } else {
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white)
+                                    .frame(width: 150, height: 150)
+                                    .overlay(ProgressView())
+                            }
+                            
+                            Text("扫码点歌")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(.white)
+                            
+                            if let device = deviceManager.connectedDevice {
+                                Text("http://\(device.host):\(device.port)/m")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
                     }
-                    
-                    Text("扫码点歌")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundColor(.white)
-                    
-                    if let device = deviceManager.connectedDevice {
-                        Text("http://\(device.host):\(device.port)/m")
-                            .font(.system(size: 14))
+                    .padding()
+                } else {
+                    // 竖屏布局
+                    VStack(spacing: 30) {
+                        Text("家庭KTV")
+                            .font(.system(size: 48, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.top, 40)
+                        
+                        Spacer()
+                        
+                        VStack(spacing: 16) {
+                            if let qrImage = qrImage {
+                                Image(uiImage: qrImage)
+                                    .interpolation(.none)
+                                    .resizable()
+                                    .frame(width: 200, height: 200)
+                                    .background(Color.white)
+                                    .cornerRadius(12)
+                            } else {
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white)
+                                    .frame(width: 200, height: 200)
+                                    .overlay(ProgressView())
+                            }
+                            
+                            Text("扫码点歌")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(.white)
+                            
+                            if let device = deviceManager.connectedDevice {
+                                Text("http://\(device.host):\(device.port)/m")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.gray)
+                            }
+                        }
+                        
+                        Spacer()
+                        
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(wsManager.isConnected ? Color.green : Color.red)
+                                .frame(width: 8, height: 8)
+                            Text(wsManager.isConnected ? "遥控已连接" : "遥控未连接")
+                                .font(.system(size: 12))
+                                .foregroundColor(.gray)
+                        }
+                        .padding(.bottom, 10)
+                        
+                        Text("等待点歌中...")
+                            .font(.system(size: 16))
                             .foregroundColor(.gray)
+                            .padding(.bottom, 30)
                     }
                 }
-                
-                Spacer()
-                
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(wsManager.isConnected ? Color.green : Color.red)
-                        .frame(width: 8, height: 8)
-                    Text(wsManager.isConnected ? "遥控已连接" : "遥控未连接")
-                        .font(.system(size: 12))
-                        .foregroundColor(.gray)
-                }
-                .padding(.bottom, 10)
-                
-                Text("等待点歌中...")
-                    .font(.system(size: 16))
-                    .foregroundColor(.gray)
-                    .padding(.bottom, 30)
             }
+            .onAppear { generateQRCode() }
         }
-        .onAppear { generateQRCode() }
     }
     
     func generateQRCode() {
@@ -702,14 +859,14 @@ struct PlayerView: View {
                     .transition(.opacity)
             }
             
-            // 氛围效果覆盖层（最上层，确保在所有内容之上）
+            // 氛围效果覆盖层（最上层）
             if let effect = playerManager.wsManager.currentEffect {
                 EffectOverlayView(
                     effect: effect,
                     show: playerManager.wsManager.showEffect,
                     count: playerManager.wsManager.effectCount
                 )
-                .zIndex(100)  // 确保在最上层
+                .zIndex(100)
             }
             
             // 调试按钮（右上角）
@@ -737,6 +894,7 @@ struct PlayerView: View {
                     showDebug: $showDebug
                 )
                 .transition(.move(edge: .top))
+                .zIndex(200)
             }
         }
         .onAppear {
