@@ -575,9 +575,9 @@ class PlayerManager: ObservableObject {
     // 直接切换音轨（原唱/伴唱）- 尝试多种VLC API
     func switchVocalMode(_ mode: String) {
         vocalMode = mode
-        print("========== switchVocalMode被调用（测试1：仅读取操作）==========")
+        print("========== switchVocalMode被调用（测试2：仅audioTrackNames读取）==========")
         print("mode: \(mode)")
-        addLog("🔊 [测试1] switchVocalMode被调用: \(mode) (仅读取，无写入)", type: .info)
+        addLog("🔊 [测试2] switchVocalMode被调用: \(mode) (仅audioTrackNames读取)", type: .info)
         
         guard let player = vlcPlayer else {
             addLog("❌ VLC播放器未就绪", type: .error)
@@ -587,37 +587,16 @@ class PlayerManager: ObservableObject {
         let targetIndex: Int32 = (mode == "original") ? 1 : 2
         addLog("🎯 目标音轨索引: \(targetIndex)", type: .info)
         
-        // 测试读取操作1：audioTrackNames
-        do {
-            if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
-                addLog("📋 可用音轨: \(trackNames)", type: .info)
-                print("可用音轨: \(trackNames)")
-            }
-        } catch {
-            addLog("❌ 读取audioTrackNames失败: \(error.localizedDescription)", type: .error)
+        // 只测试读取操作1：audioTrackNames（不使用do-catch，直接可选绑定）
+        if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
+            addLog("📋 可用音轨: \(trackNames)", type: .info)
+            print("可用音轨: \(trackNames)")
+        } else {
+            addLog("⚠️ 无法读取audioTrackNames", type: .warning)
         }
         
-        // 测试读取操作2：audioTrackIndex
-        do {
-            if let currentTrack = player.value(forKey: "audioTrackIndex") as? Int32 {
-                addLog("📊 当前音轨索引: \(currentTrack)", type: .info)
-                print("当前音轨索引: \(currentTrack)")
-            }
-        } catch {
-            addLog("❌ 读取audioTrackIndex失败: \(error.localizedDescription)", type: .error)
-        }
-        
-        // 测试读取操作3：audio对象
-        do {
-            if let audio = player.value(forKey: "audio") as? NSObject {
-                addLog("📊 audio对象获取成功", type: .info)
-            }
-        } catch {
-            addLog("❌ 读取audio对象失败: \(error.localizedDescription)", type: .error)
-        }
-        
-        // 暂时不执行写入操作，防止闪退
-        addLog("🔇 [测试1] 写入操作已禁用，仅测试读取", type: .warning)
+        // 其他读取操作和写入操作都禁用
+        addLog("🔇 [测试2] 其他读取和写入操作已禁用", type: .warning)
     }
     
     // 保留原方法的占位，后续逐步恢复
