@@ -506,7 +506,7 @@ struct VLCVideoView: UIViewRepresentable {
         guard let player = context.coordinator.player else { return }
         
         // 确保drawable视图在屏幕旋转时正确调整大小
-        if player.drawable !== uiView {
+        if let drawable = player.drawable as? UIView, drawable !== uiView {
             player.drawable = uiView
         }
         
