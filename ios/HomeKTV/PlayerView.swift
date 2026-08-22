@@ -74,179 +74,40 @@ enum KTVEffect: String {
     }
 }
 
-// MARK: - 音效播放器
-class EffectSoundPlayer: NSObject, AVAudioPlayerDelegate {
+// MARK: - 音效播放器（使用系统音效，自然不突兀）
+class EffectSoundPlayer {
     static let shared = EffectSoundPlayer()
-    private var audioPlayers: [AVAudioPlayer] = []
-    private var audioEngine: AVAudioEngine?
-    private var noisePlayers: [AVAudioPlayerNode] = []
     
     func playEffect(_ effect: KTVEffect) {
-        // 先播放系统音效作为基础
+        // 使用系统音效，自然不突兀
         AudioServicesPlaySystemSound(effect.systemSoundID)
         
-        // 根据效果类型生成更真实的音效
+        // 对于某些效果，播放两次增强效果
         switch effect {
         case .applause, .clap:
-            playApplauseSound()
+            // 鼓掌：连续播放两次
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                AudioServicesPlaySystemSound(1104)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                AudioServicesPlaySystemSound(1104)
+            }
         case .cheer:
-            playCheerSound()
+            // 欢呼：连续播放两次
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                AudioServicesPlaySystemSound(1306)
+            }
         case .boo, .hiss:
-            playBooSound()
+            // 倒彩：使用较低的音效
+            AudioServicesPlaySystemSound(1102)
         case .cheers, .toast:
-            playCheersSound()
+            // 干杯：使用清脆的音效
+            AudioServicesPlaySystemSound(1304)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                AudioServicesPlaySystemSound(1304)
+            }
         case .unknown:
             break
-        }
-    }
-    
-    // 鼓掌声 - 使用白噪音模拟
-    private func playApplauseSound() {
-        let engine = AVAudioEngine()
-        let playerNode = AVAudioPlayerNode()
-        engine.attach(playerNode)
-        
-        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: format)
-        
-        // 生成白噪音缓冲
-        let frameCount = AVAudioFrameCount(44100 * 2) // 2秒
-        let buffer = AVAudioPCMBuffer(pcmFormat: format!, frameCapacity: frameCount)!
-        buffer.frameLength = frameCount
-        
-        // 填充随机噪音（模拟掌声）
-        if let channelData = buffer.floatChannelData {
-            for frame in 0..<Int(frameCount) {
-                // 使用衰减的随机噪音模拟掌声
-                let decay = Float(1.0 - Double(frame) / Double(frameCount))
-                let noise = Float.random(in: -0.5...0.5) * decay
-                channelData[0][frame] = noise
-                channelData[1][frame] = noise
-            }
-        }
-        
-        do {
-            try engine.start()
-            playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
-            playerNode.play()
-            
-            // 2秒后停止引擎
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                engine.stop()
-            }
-        } catch {
-            print("启动音频引擎失败: \(error)")
-        }
-    }
-    
-    // 欢呼声 - 使用更高频率的噪音
-    private func playCheerSound() {
-        let engine = AVAudioEngine()
-        let playerNode = AVAudioPlayerNode()
-        engine.attach(playerNode)
-        
-        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: format)
-        
-        let frameCount = AVAudioFrameCount(44100 * 2)
-        let buffer = AVAudioPCMBuffer(pcmFormat: format!, frameCapacity: frameCount)!
-        buffer.frameLength = frameCount
-        
-        if let channelData = buffer.floatChannelData {
-            for frame in 0..<Int(frameCount) {
-                // 欢呼声 - 使用带节奏的噪音
-                let decay = Float(1.0 - Double(frame) / Double(frameCount))
-                let rhythm = sin(Double(frame) * 0.01) * 0.3
-                let noise = Float.random(in: -0.3...0.3) * decay + Float(rhythm) * decay
-                channelData[0][frame] = noise
-                channelData[1][frame] = noise
-            }
-        }
-        
-        do {
-            try engine.start()
-            playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
-            playerNode.play()
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                engine.stop()
-            }
-        } catch {
-            print("启动音频引擎失败: \(error)")
-        }
-    }
-    
-    // 倒彩声 - 使用低频噪音
-    private func playBooSound() {
-        let engine = AVAudioEngine()
-        let playerNode = AVAudioPlayerNode()
-        engine.attach(playerNode)
-        
-        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: format)
-        
-        let frameCount = AVAudioFrameCount(44100 * 2)
-        let buffer = AVAudioPCMBuffer(pcmFormat: format!, frameCapacity: frameCount)!
-        buffer.frameLength = frameCount
-        
-        if let channelData = buffer.floatChannelData {
-            for frame in 0..<Int(frameCount) {
-                // 倒彩声 - 使用低频嗡嗡声
-                let decay = Float(1.0 - Double(frame) / Double(frameCount))
-                let lowFreq = sin(Double(frame) * 0.005) * 0.4
-                let noise = Float.random(in: -0.1...0.1) * decay + Float(lowFreq) * decay
-                channelData[0][frame] = noise
-                channelData[1][frame] = noise
-            }
-        }
-        
-        do {
-            try engine.start()
-            playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
-            playerNode.play()
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                engine.stop()
-            }
-        } catch {
-            print("启动音频引擎失败: \(error)")
-        }
-    }
-    
-    // 干杯声 - 使用清脆的碰杯声（高频短促）
-    private func playCheersSound() {
-        let engine = AVAudioEngine()
-        let playerNode = AVAudioPlayerNode()
-        engine.attach(playerNode)
-        
-        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: format)
-        
-        let frameCount = AVAudioFrameCount(44100 * 1)
-        let buffer = AVAudioPCMBuffer(pcmFormat: format!, frameCapacity: frameCount)!
-        buffer.frameLength = frameCount
-        
-        if let channelData = buffer.floatChannelData {
-            for frame in 0..<Int(frameCount) {
-                // 干杯声 - 使用高频衰减的清脆声音
-                let decay = Float(exp(-Double(frame) * 0.005))
-                let highFreq = sin(Double(frame) * 0.1) * 0.5
-                let noise = Float(highFreq) * decay + Float.random(in: -0.05...0.05) * decay
-                channelData[0][frame] = noise
-                channelData[1][frame] = noise
-            }
-        }
-        
-        do {
-            try engine.start()
-            playerNode.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
-            playerNode.play()
-            
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                engine.stop()
-            }
-        } catch {
-            print("启动音频引擎失败: \(error)")
         }
     }
 }
@@ -481,10 +342,10 @@ struct VLCVideoView: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let containerView = UIView()
         containerView.backgroundColor = .black
-        containerView.contentMode = .scaleAspectFit
-        // 确保视图自动调整大小以填充父视图
-        containerView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        containerView.contentMode = .scaleAspectFill
         containerView.clipsToBounds = true
+        // 确保视图自动调整大小以填充父视图
+        containerView.autoresizingMask = [.flexibleWidth, .flexibleHeight, .flexibleLeftMargin, .flexibleRightMargin, .flexibleTopMargin, .flexibleBottomMargin]
         
         let player = VLCMediaPlayer()
         player.drawable = containerView
@@ -510,34 +371,35 @@ struct VLCVideoView: UIViewRepresentable {
             player.drawable = uiView
         }
         
+        // 确保视图大小正确（横屏修复）
+        uiView.frame = UIScreen.main.bounds
+        uiView.setNeedsLayout()
+        uiView.layoutIfNeeded()
+        
         if let songId = songId, context.coordinator.lastSongId != songId {
             onLog?("切换歌曲ID: \(songId), URL: \(url?.lastPathComponent ?? "nil")", .info)
             context.coordinator.lastSongId = songId
             context.coordinator.lastURL = url
             
-            // 立即停止旧播放并开始新播放，减少延迟
+            // 立即停止旧播放并开始新播放
             player.stop()
             onLog?("停止旧播放", .info)
             
-            // 短暂延迟确保VLC准备好，然后立即开始新播放
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                if let url = url {
-                    let media = VLCMedia(url: url)
-                    player.media = media
-                    player.play()
-                    self.onLog?("开始新播放: \(url.lastPathComponent)", .info)
-                }
+            // 立即开始新播放，不延迟
+            if let url = url {
+                let media = VLCMedia(url: url)
+                player.media = media
+                player.play()
+                onLog?("开始新播放: \(url.lastPathComponent)", .info)
             }
         } else if let url = url, context.coordinator.lastURL != url {
             // URL变化但歌曲ID没变，也需要更新
             onLog?("URL变化: \(url.lastPathComponent)", .info)
             context.coordinator.lastURL = url
             player.stop()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                let media = VLCMedia(url: url)
-                player.media = media
-                player.play()
-            }
+            let media = VLCMedia(url: url)
+            player.media = media
+            player.play()
         }
     }
     
@@ -654,7 +516,7 @@ class PlayerManager: ObservableObject {
     }
 }
 
-// MARK: - 氛围效果覆盖层（带动画）
+// MARK: - 氛围效果提示（不遮挡视频，右上角小提示）
 struct EffectOverlayView: View {
     let effect: KTVEffect
     let show: Bool
@@ -662,157 +524,73 @@ struct EffectOverlayView: View {
     
     @State private var animate = false
     @State private var pulse = false
-    @State private var float = false
     
     var body: some View {
         GeometryReader { geometry in
-            ZStack {
-                if show {
-                    // 渐变背景
-                    RadialGradient(
-                        gradient: Gradient(colors: [effect.color.opacity(0.3), Color.black.opacity(0.8)]),
-                        center: .center,
-                        startRadius: 0,
-                        endRadius: max(geometry.size.width, geometry.size.height)
-                    )
-                    .ignoresSafeArea()
+            VStack {
+                HStack {
+                    Spacer()
                     
-                    // 粒子效果背景
-                    ParticleBackgroundView(effect: effect)
-                    
-                    // 光环效果
-                    Circle()
-                        .stroke(effect.color.opacity(0.5), lineWidth: 3)
-                        .frame(width: 200, height: 200)
-                        .scaleEffect(animate ? 1.5 : 0.5)
-                        .opacity(animate ? 0 : 1)
-                        .animation(
-                            Animation.easeOut(duration: 1.0)
-                                .repeatForever(autoreverses: false),
-                            value: animate
+                    if show {
+                        // 右上角小提示，不遮挡视频
+                        HStack(spacing: 12) {
+                            // 图标 - 带动画
+                            Image(systemName: effect.iconName)
+                                .font(.system(size: 32))
+                                .foregroundColor(effect.color)
+                                .shadow(color: effect.color, radius: 5)
+                                .scaleEffect(pulse ? 1.2 : 0.8)
+                                .rotationEffect(.degrees(animate ? 10 : -10))
+                                .animation(
+                                    Animation.easeInOut(duration: 0.5)
+                                        .repeatForever(autoreverses: true),
+                                    value: animate
+                                )
+                                .animation(
+                                    Animation.spring(response: 0.3, dampingFraction: 0.5)
+                                        .repeatForever(autoreverses: true),
+                                    value: pulse
+                                )
+                            
+                            // 文字
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(effect.displayName)
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundColor(.white)
+                                Text("第 \(count) 次")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 20)
+                                .fill(Color.black.opacity(0.6))
                         )
-                    
-                    // 氛围效果内容 - 居中显示
-                    VStack(spacing: 20) {
-                        Spacer()
-                        
-                        // 图标 - 带浮动+脉冲+旋转动画
-                        Image(systemName: effect.iconName)
-                            .font(.system(size: 120))
-                            .foregroundColor(effect.color)
-                            .shadow(color: effect.color, radius: 20)
-                            .scaleEffect(pulse ? 1.3 : 0.9)
-                            .rotationEffect(.degrees(animate ? 15 : -15))
-                            .offset(y: float ? -20 : 20)
-                            .animation(
-                                Animation.easeInOut(duration: 0.6)
-                                    .repeatForever(autoreverses: true),
-                                value: animate
-                            )
-                            .animation(
-                                Animation.spring(response: 0.4, dampingFraction: 0.4)
-                                    .repeatForever(autoreverses: true),
-                                value: pulse
-                            )
-                            .animation(
-                                Animation.easeInOut(duration: 1.0)
-                                    .repeatForever(autoreverses: true),
-                                value: float
-                            )
-                        
-                        // 文字 - 带发光效果
-                        Text(effect.displayName)
-                            .font(.system(size: 48, weight: .bold))
-                            .foregroundColor(.white)
-                            .shadow(color: effect.color, radius: 10)
-                            .shadow(color: .black, radius: 3)
-                            .scaleEffect(pulse ? 1.15 : 1.0)
-                            .animation(
-                                Animation.spring(response: 0.3, dampingFraction: 0.5)
-                                    .repeatForever(autoreverses: true),
-                                value: pulse
-                            )
-                        
-                        // 次数
-                        Text("第 \(count) 次")
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundColor(.white.opacity(0.9))
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 8)
-                            .background(
-                                Capsule()
-                                    .fill(effect.color.opacity(0.3))
-                            )
-                        
-                        Spacer()
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 20)
+                                .stroke(effect.color.opacity(0.5), lineWidth: 2)
+                        )
+                        .padding(.trailing, 20)
+                        .padding(.top, 60)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .transition(.opacity)
                 }
+                Spacer()
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .onAppear {
                 animate = true
                 pulse = true
-                float = true
             }
             .onDisappear {
                 animate = false
                 pulse = false
-                float = false
             }
         }
         .allowsHitTesting(false)
         .animation(.easeInOut(duration: 0.3), value: show)
-    }
-}
-
-// MARK: - 粒子背景效果
-struct ParticleBackgroundView: View {
-    let effect: KTVEffect
-    @State private var particles: [Particle] = []
-    
-    struct Particle: Identifiable {
-        let id = UUID()
-        let x: CGFloat
-        let y: CGFloat
-        let size: CGFloat
-        let opacity: Double
-        let speed: Double
-    }
-    
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                ForEach(particles) { particle in
-                    Circle()
-                        .fill(effect.color)
-                        .frame(width: particle.size, height: particle.size)
-                        .position(x: particle.x, y: particle.y)
-                        .opacity(particle.opacity)
-                        .animation(
-                            Animation.linear(duration: particle.speed)
-                                .repeatForever(autoreverses: false),
-                            value: particle.id
-                        )
-                }
-            }
-            .onAppear {
-                createParticles(in: geometry.size)
-            }
-        }
-    }
-    
-    private func createParticles(in size: CGSize) {
-        particles = (0..<30).map { _ in
-            Particle(
-                x: CGFloat.random(in: 0...size.width),
-                y: CGFloat.random(in: 0...size.height),
-                size: CGFloat.random(in: 5...20),
-                opacity: Double.random(in: 0.2...0.6),
-                speed: Double.random(in: 1...3)
-            )
-        }
     }
 }
 
