@@ -1,7 +1,6 @@
 import SwiftUI
 import MobileVLCKit
 import Combine
-import AVFoundation
 
 // MARK: - 数据模型
 struct KTVSong: Codable {
@@ -42,37 +41,6 @@ enum KTVEffect: String {
         case .unknown: return "氛围"
         }
     }
-    
-    var systemSoundID: UInt32? {
-        // 使用系统音效
-        switch self {
-        case .applause: return 1104  // 点击声
-        case .cheer: return 1105
-        case .laughter: return 1106
-        case .fireworks: return 1107
-        case .whistle: return 1108
-        case .scream: return 1109
-        case .unknown: return nil
-        }
-    }
-}
-
-// MARK: - 氛围音效播放器
-class EffectSoundPlayer {
-    static let shared = EffectSoundPlayer()
-    
-    func playEffect(_ effect: KTVEffect) {
-        print("播放氛围效果: \(effect.displayName) (\(effect.rawValue))")
-        
-        // 尝试播放系统音效
-        if let soundID = effect.systemSoundID {
-            AudioServicesPlaySystemSound(soundID)
-        }
-        
-        // 也可以使用震动反馈
-        let generator = UINotificationFeedbackGenerator()
-        generator.notificationOccurred(.success)
-    }
 }
 
 // MARK: - WebSocket管理器
@@ -81,7 +49,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
     @Published var vocalMode: String = "accompaniment"
     @Published var currentEffect: KTVEffect?
     @Published var showEffect = false
-    @Published var lastMessage: String = ""
+    @Published var lastMessageType: String = ""  // 调试用
     
     private var webSocket: URLSessionWebSocketTask?
     private var session: URLSession?
@@ -125,14 +93,11 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
             case .success(let message):
                 switch message {
                 case .string(let text):
-                    print("收到WebSocket消息: \(text)")
-                    DispatchQueue.main.async {
-                        self.lastMessage = text
-                    }
+                    print("WebSocket收到: \(text)")
                     self.handleMessage(text)
                 case .data(let data):
                     if let text = String(data: data, encoding: .utf8) {
-                        print("收到WebSocket数据: \(text)")
+                        print("WebSocket收到(data): \(text)")
                         self.handleMessage(text)
                     }
                 @unknown default:
@@ -156,8 +121,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
               let type = json["type"] as? String else { return }
         
         let payload = json["payload"] as? [String: Any]
-        
-        print("处理消息类型: \(type), payload: \(String(describing: payload))")
+        lastMessageType = type
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -167,32 +131,38 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                 self.isConnected = true
             case "vocal_changed":
                 if let mode = payload?["mode"] as? String {
+                    print("vocal_changed: \(mode)")
                     self.vocalMode = mode
                     self.onVocalChanged?(mode)
                 }
-            case "effect", "trigger_effect", "play_effect", "effect_trigger":
-                // 尝试多种字段名
-                let effectStr = payload?["effect"] as? String
-                    ?? payload?["type"] as? String
-                    ?? payload?["name"] as? String
-                    ?? payload?["id"] as? String
-                    ?? (payload?["effect"] as? [String: Any])?["type"] as? String
+            case "effect":
+                // 尝试多种payload格式
+                var effectStr: String?
+                if let e = payload?["effect"] as? String {
+                    effectStr = e
+                } else if let e = payload?["type"] as? String {
+                    effectStr = e
+                } else if let e = payload?["name"] as? String {
+                    effectStr = e
+                }
                 
                 if let effectStr = effectStr {
+                    print("effect: \(effectStr)")
                     let effect = KTVEffect(rawValue: effectStr) ?? .unknown
                     self.currentEffect = effect
                     self.showEffect = true
                     self.onEffectChanged?(effect)
-                    EffectSoundPlayer.shared.playEffect(effect)
                     
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
                         self?.showEffect = false
                     }
                 }
             case "playback_restarted":
+                print("playback_restarted")
                 self.onPlaybackRestarted?()
             default:
-                print("未处理的消息类型: \(type)")
+                print("未处理的消息类型: \(type), payload: \(String(describing: payload))")
+                break
             }
         }
     }
@@ -239,7 +209,6 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
 // MARK: - VLC播放器视图
 struct VLCVideoView: UIViewRepresentable {
     let url: URL?
-    let vocalMode: String
     
     func makeUIView(context: Context) -> UIView {
         let containerView = UIView()
@@ -256,18 +225,27 @@ struct VLCVideoView: UIViewRepresentable {
         
         context.coordinator.player = player
         context.coordinator.lastURL = url
-        context.coordinator.lastVocalMode = vocalMode
         return containerView
     }
     
     func updateUIView(_ uiView: UIView, context: Context) {
         guard let player = context.coordinator.player else { return }
         
+        // URL变化时重新播放
         if let url = url, context.coordinator.lastURL != url {
+            print("切换歌曲: \(url.lastPathComponent)")
             context.coordinator.lastURL = url
-            let media = VLCMedia(url: url)
-            player.media = media
-            player.play()
+            
+            // 先停止旧播放
+            player.stop()
+            
+            // 延迟开始新播放，确保VLC准备好
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                let media = VLCMedia(url: url)
+                player.media = media
+                player.play()
+                print("开始播放新歌曲")
+            }
         }
     }
     
@@ -278,7 +256,6 @@ struct VLCVideoView: UIViewRepresentable {
     class Coordinator: NSObject {
         var player: VLCMediaPlayer?
         var lastURL: URL?
-        var lastVocalMode: String = "accompaniment"
     }
 }
 
@@ -308,8 +285,9 @@ class PlayerManager: ObservableObject {
         wsManager.onEffectChanged = { _ in }
         wsManager.onPlaybackRestarted = { [weak self] in
             if let song = self?.currentSong {
+                print("播放重启: \(song.title)")
                 self?.videoURL = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(song.id)")
                 }
             }
@@ -347,12 +325,14 @@ class PlayerManager: ObservableObject {
                     
                     if let playing = queue.playing {
                         if self?.currentSong?.id != playing.song.id {
+                            print("检测到新歌曲: \(playing.song.title) - \(playing.song.artist) (ID: \(playing.song.id))")
                             self?.currentSong = playing.song
                             self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(playing.song.id)")
                         }
                         self?.showIdleScreen = false
                     } else {
                         if self?.currentSong != nil {
+                            print("播放队列为空，停止播放")
                             self?.currentSong = nil
                             self?.videoURL = nil
                         }
@@ -372,42 +352,44 @@ struct EffectOverlayView: View {
     let show: Bool
     
     var body: some View {
-        if show {
-            VStack {
-                Spacer()
-                HStack {
-                    Spacer()
-                    VStack(spacing: 10) {
-                        Image(systemName: effectIcon)
-                            .font(.system(size: 80))
-                            .foregroundColor(.yellow)
-                            .scaleEffect(1.2)
-                            .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: show)
-                        Text(effect.displayName)
-                            .font(.system(size: 32, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                    .padding(40)
-                    .background(
-                        RadialGradient(gradient: Gradient(colors: [Color.yellow.opacity(0.3), Color.clear]), center: .center, startRadius: 0, endRadius: 200)
-                    )
-                    .cornerRadius(30)
-                    Spacer()
+        ZStack {
+            if show {
+                // 半透明背景
+                Color.black.opacity(0.3)
+                    .ignoresSafeArea()
+                
+                // 氛围效果内容
+                VStack(spacing: 20) {
+                    Image(systemName: effectIcon)
+                        .font(.system(size: 80))
+                        .foregroundColor(.yellow)
+                        .shadow(color: .yellow, radius: 10)
+                    
+                    Text(effect.displayName)
+                        .font(.system(size: 32, weight: .bold))
+                        .foregroundColor(.white)
+                        .shadow(color: .black, radius: 2)
                 }
-                Spacer()
+                .padding(40)
+                .background(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(Color.black.opacity(0.7))
+                )
+                .transition(.scale.combined(with: .opacity))
+                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: show)
             }
-            .transition(.opacity)
         }
+        .allowsHitTesting(false)  // 不拦截点击事件
     }
     
     private var effectIcon: String {
         switch effect {
-        case .applause: return "hands.clap.fill"
+        case .applause: return "hands.clap"
         case .cheer: return "person.3.fill"
-        case .laughter: return "face.smiling.fill"
+        case .laughter: return "face.smiling"
         case .fireworks: return "sparkles"
         case .whistle: return "wind"
-        case .scream: return "exclamationmark.triangle.fill"
+        case .scream: return "exclamationmark.triangle"
         case .unknown: return "star.fill"
         }
     }
@@ -464,23 +446,13 @@ struct IdleOverlayView: View {
                 
                 Spacer()
                 
-                VStack(spacing: 8) {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(wsManager.isConnected ? Color.green : Color.red)
-                            .frame(width: 8, height: 8)
-                        Text(wsManager.isConnected ? "遥控已连接" : "遥控未连接")
-                            .font(.system(size: 12))
-                            .foregroundColor(.gray)
-                    }
-                    
-                    // 调试信息：显示最后收到的消息
-                    if !wsManager.lastMessage.isEmpty {
-                        Text("最后消息: \(wsManager.lastMessage.prefix(50))")
-                            .font(.system(size: 10))
-                            .foregroundColor(.gray.opacity(0.6))
-                            .lineLimit(1)
-                    }
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(wsManager.isConnected ? Color.green : Color.red)
+                        .frame(width: 8, height: 8)
+                    Text(wsManager.isConnected ? "遥控已连接" : "遥控未连接")
+                        .font(.system(size: 12))
+                        .foregroundColor(.gray)
                 }
                 .padding(.bottom, 10)
                 
@@ -525,17 +497,16 @@ struct PlayerView: View {
     
     var body: some View {
         ZStack {
-            VLCVideoView(
-                url: playerManager.videoURL,
-                vocalMode: playerManager.vocalMode
-            )
-            .ignoresSafeArea()
+            // VLC播放器（最底层）
+            VLCVideoView(url: playerManager.videoURL)
+                .ignoresSafeArea()
             
-            // 氛围效果覆盖层
+            // 氛围效果覆盖层（中间层）
             if let effect = playerManager.wsManager.currentEffect {
                 EffectOverlayView(effect: effect, show: playerManager.wsManager.showEffect)
             }
             
+            // 扫码提示页面（最上层）
             if playerManager.showIdleScreen {
                 IdleOverlayView(deviceManager: deviceManager, wsManager: playerManager.wsManager)
                     .transition(.opacity)
