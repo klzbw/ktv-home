@@ -18,23 +18,14 @@ jobs:
     - name: Install XcodeGen
       run: brew install xcodegen
     
-    - name: Install CocoaPods
-      run: |
-        gem install cocoapods
-        pod setup
-    
     - name: Generate Xcode project
       working-directory: ios
       run: xcodegen generate
     
-    - name: Install dependencies
-      working-directory: ios
-      run: pod install --repo-update
-    
     - name: Build app
       working-directory: ios
       run: |
-        xcodebuild -workspace HomeKTV.xcworkspace           -scheme HomeKTV           -configuration Release           -sdk iphoneos           -archivePath $PWD/build/HomeKTV.xcarchive           archive           CODE_SIGN_IDENTITY=""           CODE_SIGNING_REQUIRED=NO           CODE_SIGNING_ALLOWED=NO
+        xcodebuild -project HomeKTV.xcodeproj           -scheme HomeKTV           -configuration Release           -sdk iphoneos           -archivePath $PWD/build/HomeKTV.xcarchive           archive           CODE_SIGN_IDENTITY=""           CODE_SIGNING_REQUIRED=NO           CODE_SIGNING_ALLOWED=NO
     
     - name: Package IPA
       working-directory: ios
