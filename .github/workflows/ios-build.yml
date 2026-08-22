@@ -2,7 +2,7 @@ name: iOS Build IPA
 
 on:
   push:
-    branches: [master, main]
+    branches: [ master, main ]
     paths:
       - 'ios/**'
       - '.github/workflows/ios-build.yml'
@@ -11,67 +11,43 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
-
-      - name: Generate Xcode Project
-        run: |
-          cd ios
-          xcodegen generate
-
-      - name: Show Xcode version
-        run: xcodebuild -version
-
-      - name: Build for iOS (Release)
-        run: |
-          cd ios
-          xcodebuild archive             -project HomeKTV.xcodeproj             -scheme HomeKTV             -configuration Release             -destination 'generic/platform=iOS'             -archivePath build/HomeKTV.xcarchive             CODE_SIGN_IDENTITY=""             CODE_SIGNING_REQUIRED=NO             CODE_SIGNING_ALLOWED=NO
-
-      - name: Package IPA manually
-        run: |
-          cd ios
-          # 查找.app文件
-          APP_PATH=$(find build/HomeKTV.xcarchive -name "*.app" -type d | head -1)
-          echo "找到APP: $APP_PATH"
-          
-          if [ -z "$APP_PATH" ]; then
-            echo "错误：未找到.app文件"
-            ls -la build/HomeKTV.xcarchive/
-            ls -la build/HomeKTV.xcarchive/Products/ 2>/dev/null || echo "Products目录不存在"
-            find build/HomeKTV.xcarchive -type d
-            exit 1
-          fi
-          
-          # 创建IPA结构
-          mkdir -p build/ipa/Payload
-          cp -R "$APP_PATH" build/ipa/Payload/
-          
-          # 压缩成IPA
-          cd build/ipa
-          zip -r HomeKTV.ipa Payload/
-          cd ../..
-          
-          # 验证IPA
-          ls -la build/ipa/HomeKTV.ipa
-          echo "IPA创建成功！"
-
-      - name: Upload IPA artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: HomeKTV-iOS-ipa
-          path: ios/build/ipa/HomeKTV.ipa
-          if-no-files-found: error
-
-      - name: Create Release
-        if: github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ios-v1.0.${{ github.run_number }}
-          name: iOS v1.0.${{ github.run_number }}
-          files: ios/build/ipa/HomeKTV.ipa
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - uses: actions/checkout@v4
+    
+    - name: Install XcodeGen
+      run: brew install xcodegen
+    
+    - name: Install CocoaPods
+      run: |
+        gem install cocoapods
+        pod setup
+    
+    - name: Generate Xcode project
+      working-directory: ios
+      run: xcodegen generate
+    
+    - name: Install dependencies
+      working-directory: ios
+      run: pod install --repo-update
+    
+    - name: Build app
+      working-directory: ios
+      run: |
+        xcodebuild -workspace HomeKTV.xcworkspace           -scheme HomeKTV           -configuration Release           -sdk iphoneos           -archivePath $PWD/build/HomeKTV.xcarchive           archive           CODE_SIGN_IDENTITY=""           CODE_SIGNING_REQUIRED=NO           CODE_SIGNING_ALLOWED=NO
+    
+    - name: Package IPA
+      working-directory: ios
+      run: |
+        mkdir -p build/Payload
+        cp -R build/HomeKTV.xcarchive/Products/Applications/HomeKTV.app build/Payload/
+        cd build
+        zip -r HomeKTV-iOS.ipa Payload
+        ls -la HomeKTV-iOS.ipa
+    
+    - name: Upload IPA
+      uses: actions/upload-artifact@v4
+      with:
+        name: HomeKTV-iOS-ipa
+        path: ios/build/HomeKTV-iOS.ipa
+        retention-days: 30

@@ -1,5 +1,5 @@
 import SwiftUI
-import AVKit
+import MobileVLCKit
 import Combine
 
 // MARK: - 数据模型
@@ -36,17 +36,29 @@ struct KTVQueue: Codable {
 }
 
 // MARK: - 播放管理器
-class PlayerManager: ObservableObject {
+class PlayerManager: NSObject, ObservableObject {
     @Published var currentSong: KTVSong?
     @Published var isPlaying = false
     @Published var queue: KTVQueue?
     @Published var showIdleScreen = true
+    @Published var errorMessage: String?
     
-    var player: AVPlayer?
-    var playerViewController: AVPlayerViewController?
+    var mediaPlayer: VLCMediaPlayer?
     private var timer: Timer?
     private var host: String = ""
     private var port: Int = 8980
+    
+    override init() {
+        super.init()
+        setupPlayer()
+    }
+    
+    func setupPlayer() {
+        if mediaPlayer == nil {
+            mediaPlayer = VLCMediaPlayer()
+            mediaPlayer?.delegate = self
+        }
+    }
     
     func configure(host: String, port: Int) {
         self.host = host
@@ -71,12 +83,18 @@ class PlayerManager: ObservableObject {
         guard let url = URL(string: "http://\(host):\(port)/api/queue") else { return }
         
         URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
-            guard let data = data, error == nil else { return }
+            guard let data = data, error == nil else {
+                DispatchQueue.main.async {
+                    self?.errorMessage = error?.localizedDescription
+                }
+                return
+            }
             
             do {
                 let queue = try JSONDecoder().decode(KTVQueue.self, from: data)
                 DispatchQueue.main.async {
                     self?.queue = queue
+                    self?.errorMessage = nil
                     
                     if let playing = queue.playing {
                         // 有歌曲在播放
@@ -89,47 +107,79 @@ class PlayerManager: ObservableObject {
                         self?.isPlaying = true
                     } else {
                         // 没有歌曲在播放
-                        self?.currentSong = nil
+                        if self?.currentSong != nil {
+                            self?.currentSong = nil
+                            self?.mediaPlayer?.stop()
+                        }
                         self?.isPlaying = false
                         self?.showIdleScreen = true
-                        self?.player?.pause()
                     }
                 }
             } catch {
                 print("解析队列失败: \(error)")
+                DispatchQueue.main.async {
+                    self?.errorMessage = "解析失败: \(error.localizedDescription)"
+                }
             }
         }.resume()
     }
     
     func playSong(_ song: KTVSong) {
-        guard let url = URL(string: "http://\(host):\(port)/api/stream/\(song.id)") else { return }
+        setupPlayer()
         
-        if player == nil {
-            player = AVPlayer()
+        guard let url = URL(string: "http://\(host):\(port)/api/stream/\(song.id)") else {
+            errorMessage = "无效的视频地址"
+            return
         }
         
-        let playerItem = AVPlayerItem(url: url)
-        player?.replaceCurrentItem(with: playerItem)
-        player?.play()
+        print("开始播放: \(song.title) - \(song.artist)")
+        print("视频地址: \(url.absoluteString)")
         
-        // 监听播放结束
-        NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: nil)
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(playerDidFinishPlaying),
-            name: .AVPlayerItemDidPlayToEndTime,
-            object: playerItem
-        )
-    }
-    
-    @objc private func playerDidFinishPlaying() {
-        // 播放结束，等待下一首歌曲
-        // 轮询会自动检测新歌曲
+        let media = VLCMedia(url: url)
+        mediaPlayer?.media = media
+        mediaPlayer?.play()
+        
+        // 设置音频轨道（原唱/伴奏）
+        // VLC会自动处理多音轨
     }
     
     deinit {
         stopPolling()
-        NotificationCenter.default.removeObserver(self)
+        mediaPlayer?.stop()
+    }
+}
+
+// MARK: - VLC播放器代理
+extension PlayerManager: VLCMediaPlayerDelegate {
+    func mediaPlayerStateChanged(_ aNotification: Notification) {
+        guard let player = aNotification.object as? VLCMediaPlayer else { return }
+        
+        DispatchQueue.main.async {
+            switch player.state {
+            case .playing:
+                self.isPlaying = true
+                self.errorMessage = nil
+                print("VLC: 正在播放")
+            case .paused:
+                self.isPlaying = false
+                print("VLC: 已暂停")
+            case .stopped:
+                self.isPlaying = false
+                print("VLC: 已停止")
+            case .ended:
+                self.isPlaying = false
+                print("VLC: 播放结束")
+            case .error:
+                self.errorMessage = "播放错误"
+                print("VLC: 错误")
+            default:
+                break
+            }
+        }
+    }
+    
+    func mediaPlayerTimeChanged(_ aNotification: Notification) {
+        // 播放时间变化
     }
 }
 
@@ -145,7 +195,21 @@ struct TVPlayerView: View {
                 IdleScreenView(deviceManager: deviceManager, playerManager: playerManager)
             } else {
                 // 视频播放页面
-                VideoPlayView(playerManager: playerManager)
+                VLCPlayerView(playerManager: playerManager)
+                    .ignoresSafeArea()
+            }
+            
+            // 错误提示
+            if let error = playerManager.errorMessage {
+                VStack {
+                    Spacer()
+                    Text(error)
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.red.opacity(0.8))
+                        .cornerRadius(8)
+                        .padding(.bottom, 20)
+                }
             }
         }
         .onAppear {
@@ -298,29 +362,41 @@ struct StatView: View {
     }
 }
 
-// MARK: - 视频播放视图
-struct VideoPlayView: UIViewControllerRepresentable {
+// MARK: - VLC播放器视图
+struct VLCPlayerView: UIViewRepresentable {
     @ObservedObject var playerManager: PlayerManager
     
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let viewController = AVPlayerViewController()
-        viewController.player = playerManager.player
-        viewController.showsPlaybackControls = false
-        viewController.videoGravity = .resizeAspect
-        viewController.allowsPictureInPicturePlayback = false
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .black
         
         // 确保player已创建
-        if playerManager.player == nil {
-            playerManager.player = AVPlayer()
-            viewController.player = playerManager.player
+        playerManager.setupPlayer()
+        
+        if let player = playerManager.mediaPlayer {
+            // 将VLC播放器的视图添加到容器
+            if let vlcView = player.views?.first as? UIView {
+                vlcView.frame = view.bounds
+                vlcView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                view.addSubview(vlcView)
+            }
         }
         
-        return viewController
+        return view
     }
     
-    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
-        if uiViewController.player !== playerManager.player {
-            uiViewController.player = playerManager.player
+    func updateUIView(_ uiView: UIView, context: Context) {
+        // 更新播放器视图
+        if let player = playerManager.mediaPlayer {
+            if let vlcView = player.views?.first as? UIView {
+                if vlcView.superview !== uiView {
+                    vlcView.frame = uiView.bounds
+                    vlcView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                    uiView.addSubview(vlcView)
+                } else {
+                    vlcView.frame = uiView.bounds
+                }
+            }
         }
     }
 }
