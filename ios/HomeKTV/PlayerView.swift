@@ -1,6 +1,7 @@
 import SwiftUI
 import MobileVLCKit
 import Combine
+import AVFoundation
 
 // MARK: - 数据模型
 struct KTVSong: Codable {
@@ -17,16 +18,43 @@ struct KTVQueueItem: Codable {
 struct KTVQueue: Codable {
     let playing: KTVQueueItem?
     let list: [KTVQueueItem]?
+    let vocalMode: String?
 }
 
-// MARK: - WebSocket管理器（只连接，不处理事件）
+// MARK: - 氛围效果类型
+enum KTVEffect: String {
+    case applause = "applause"
+    case cheer = "cheer"
+    case laughter = "laughter"
+    case fireworks = "fireworks"
+    case unknown = "unknown"
+    
+    var displayName: String {
+        switch self {
+        case .applause: return "鼓掌"
+        case .cheer: return "欢呼"
+        case .laughter: return "笑声"
+        case .fireworks: return "烟花"
+        case .unknown: return "氛围"
+        }
+    }
+}
+
+// MARK: - WebSocket管理器
 class WebSocketManager: NSObject, ObservableObject {
     @Published var isConnected = false
+    @Published var vocalMode: String = "accompaniment"
+    @Published var currentEffect: KTVEffect?
+    @Published var showEffect = false
     
     private var webSocket: URLSessionWebSocketTask?
     private var pingTimer: Timer?
     private var host: String = ""
     private var port: Int = 8980
+    
+    var onVocalChanged: ((String) -> Void)?
+    var onEffectChanged: ((KTVEffect) -> Void)?
+    var onPlaybackRestarted: (() -> Void)?
     
     func connect(host: String, port: Int) {
         self.host = host
@@ -52,8 +80,17 @@ class WebSocketManager: NSObject, ObservableObject {
     private func receiveMessage() {
         webSocket?.receive { [weak self] result in
             switch result {
-            case .success:
-                break
+            case .success(let message):
+                switch message {
+                case .string(let text):
+                    self?.handleMessage(text)
+                case .data(let data):
+                    if let text = String(data: data, encoding: .utf8) {
+                        self?.handleMessage(text)
+                    }
+                @unknown default:
+                    break
+                }
             case .failure:
                 self?.isConnected = false
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
@@ -62,6 +99,42 @@ class WebSocketManager: NSObject, ObservableObject {
                 return
             }
             self?.receiveMessage()
+        }
+    }
+    
+    private func handleMessage(_ text: String) {
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = json["type"] as? String else { return }
+        
+        let payload = json["payload"] as? [String: Any]
+        
+        DispatchQueue.main.async { [weak self] in
+            switch type {
+            case "pong":
+                self?.isConnected = true
+            case "vocal_changed":
+                if let mode = payload?["mode"] as? String {
+                    self?.vocalMode = mode
+                    self?.onVocalChanged?(mode)
+                }
+            case "effect":
+                if let effectStr = payload?["effect"] as? String {
+                    let effect = KTVEffect(rawValue: effectStr) ?? .unknown
+                    self?.currentEffect = effect
+                    self?.showEffect = true
+                    self?.onEffectChanged?(effect)
+                    
+                    // 3秒后隐藏效果提示
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                        self?.showEffect = false
+                    }
+                }
+            case "playback_restarted":
+                self?.onPlaybackRestarted?()
+            default:
+                break
+            }
         }
     }
     
@@ -86,9 +159,22 @@ class WebSocketManager: NSObject, ObservableObject {
     }
 }
 
-// MARK: - VLC播放器视图（最简单版本）
+// MARK: - 氛围音效播放器
+class EffectSoundPlayer {
+    static let shared = EffectSoundPlayer()
+    private var audioPlayer: AVAudioPlayer?
+    
+    func playEffect(_ effect: KTVEffect) {
+        // 这里可以播放本地音效文件
+        // 目前只做提示，后续可以添加音效文件
+        print("播放氛围效果: \(effect.displayName)")
+    }
+}
+
+// MARK: - VLC播放器视图
 struct VLCVideoView: UIViewRepresentable {
     let url: URL?
+    let vocalMode: String
     
     func makeUIView(context: Context) -> UIView {
         let containerView = UIView()
@@ -101,20 +187,46 @@ struct VLCVideoView: UIViewRepresentable {
             let media = VLCMedia(url: url)
             player.media = media
             player.play()
+            
+            // 延迟设置音轨
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.applyVocalMode(player: player, mode: vocalMode)
+            }
         }
         
         context.coordinator.player = player
         context.coordinator.lastURL = url
+        context.coordinator.lastVocalMode = vocalMode
         return containerView
     }
     
     func updateUIView(_ uiView: UIView, context: Context) {
+        guard let player = context.coordinator.player else { return }
+        
+        // URL变化时重新播放
         if let url = url, context.coordinator.lastURL != url {
             context.coordinator.lastURL = url
             let media = VLCMedia(url: url)
-            context.coordinator.player?.media = media
-            context.coordinator.player?.play()
+            player.media = media
+            player.play()
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.applyVocalMode(player: player, mode: vocalMode)
+            }
         }
+        
+        // 原唱/伴唱变化
+        if context.coordinator.lastVocalMode != vocalMode {
+            context.coordinator.lastVocalMode = vocalMode
+            applyVocalMode(player: player, mode: vocalMode)
+        }
+    }
+    
+    private func applyVocalMode(player: VLCMediaPlayer, mode: String) {
+        // KTV mkv通常有2个音轨：0=伴奏，1=原唱
+        let trackIndex: Int32 = (mode == "original") ? 1 : 0
+        // 使用KVC方式设置音轨，避免编译错误
+        player.setValue(trackIndex, forKey: "audioTrackIndex")
     }
     
     func makeCoordinator() -> Coordinator {
@@ -124,6 +236,7 @@ struct VLCVideoView: UIViewRepresentable {
     class Coordinator: NSObject {
         var player: VLCMediaPlayer?
         var lastURL: URL?
+        var lastVocalMode: String = "accompaniment"
     }
 }
 
@@ -132,6 +245,7 @@ class PlayerManager: ObservableObject {
     @Published var currentSong: KTVSong?
     @Published var showIdleScreen = true
     @Published var videoURL: URL?
+    @Published var vocalMode: String = "accompaniment"
     
     let wsManager = WebSocketManager()
     private var timer: Timer?
@@ -141,7 +255,26 @@ class PlayerManager: ObservableObject {
     func configure(host: String, port: Int) {
         self.host = host
         self.port = port
+        
+        // 连接WebSocket
         wsManager.connect(host: host, port: port)
+        
+        // WebSocket回调
+        wsManager.onVocalChanged = { [weak self] mode in
+            self?.vocalMode = mode
+        }
+        wsManager.onEffectChanged = { effect in
+            EffectSoundPlayer.shared.playEffect(effect)
+        }
+        wsManager.onPlaybackRestarted = { [weak self] in
+            if let song = self?.currentSong {
+                self?.videoURL = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(song.id)")
+                }
+            }
+        }
+        
         startPolling()
     }
     
@@ -168,6 +301,11 @@ class PlayerManager: ObservableObject {
             do {
                 let queue = try JSONDecoder().decode(KTVQueue.self, from: data)
                 DispatchQueue.main.async {
+                    // 初始化vocalMode
+                    if let mode = queue.vocalMode, self?.vocalMode == "accompaniment" {
+                        self?.vocalMode = mode
+                    }
+                    
                     if let playing = queue.playing {
                         if self?.currentSong?.id != playing.song.id {
                             self?.currentSong = playing.song
@@ -186,6 +324,48 @@ class PlayerManager: ObservableObject {
                 print("解析失败: \(error)")
             }
         }.resume()
+    }
+}
+
+// MARK: - 氛围效果覆盖层
+struct EffectOverlayView: View {
+    let effect: KTVEffect
+    let show: Bool
+    
+    var body: some View {
+        if show {
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    VStack(spacing: 10) {
+                        Image(systemName: effectIcon)
+                            .font(.system(size: 60))
+                            .foregroundColor(.yellow)
+                        Text(effect.displayName)
+                            .font(.system(size: 24, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    .padding(30)
+                    .background(Color.black.opacity(0.6))
+                    .cornerRadius(20)
+                    Spacer()
+                }
+                Spacer()
+            }
+            .transition(.opacity)
+            .animation(.easeInOut, value: show)
+        }
+    }
+    
+    private var effectIcon: String {
+        switch effect {
+        case .applause: return "hands.clap"
+        case .cheer: return "person.3.fill"
+        case .laughter: return "face.smiling"
+        case .fireworks: return "sparkles"
+        case .unknown: return "star.fill"
+        }
     }
 }
 
@@ -291,8 +471,16 @@ struct PlayerView: View {
     
     var body: some View {
         ZStack {
-            VLCVideoView(url: playerManager.videoURL)
-                .ignoresSafeArea()
+            VLCVideoView(
+                url: playerManager.videoURL,
+                vocalMode: playerManager.vocalMode
+            )
+            .ignoresSafeArea()
+            
+            // 氛围效果覆盖层
+            if let effect = playerManager.wsManager.currentEffect {
+                EffectOverlayView(effect: effect, show: playerManager.wsManager.showEffect)
+            }
             
             if playerManager.showIdleScreen {
                 IdleOverlayView(deviceManager: deviceManager, wsManager: playerManager.wsManager)
