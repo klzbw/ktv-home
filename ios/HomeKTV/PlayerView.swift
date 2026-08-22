@@ -18,16 +18,12 @@ struct KTVQueue: Codable {
     let playing: KTVQueueItem?
     let list: [KTVQueueItem]?
     let vocalMode: String?
-    let volume: Int?
-    let muted: Bool?
 }
 
 // MARK: - WebSocket管理器
 class WebSocketManager: NSObject, ObservableObject {
     @Published var isConnected = false
     @Published var vocalMode: String = "accompaniment"
-    @Published var volume: Int = 100
-    @Published var isMuted: Bool = false
     
     private var webSocket: URLSessionWebSocketTask?
     private var pingTimer: Timer?
@@ -35,9 +31,6 @@ class WebSocketManager: NSObject, ObservableObject {
     private var port: Int = 8980
     
     var onVocalChanged: ((String) -> Void)?
-    var onVolumeChanged: ((Int) -> Void)?
-    var onMuteChanged: ((Bool) -> Void)?
-    var onEffectChanged: ((String) -> Void)?
     var onPlaybackRestarted: (() -> Void)?
     
     func connect(host: String, port: Int) {
@@ -102,20 +95,6 @@ class WebSocketManager: NSObject, ObservableObject {
                     self?.vocalMode = mode
                     self?.onVocalChanged?(mode)
                 }
-            case "volume_changed":
-                if let vol = payload?["volume"] as? Int {
-                    self?.volume = vol
-                    self?.onVolumeChanged?(vol)
-                }
-            case "mute_changed":
-                if let muted = payload?["muted"] as? Bool {
-                    self?.isMuted = muted
-                    self?.onMuteChanged?(muted)
-                }
-            case "effect":
-                if let effect = payload?["effect"] as? String {
-                    self?.onEffectChanged?(effect)
-                }
             case "playback_restarted":
                 self?.onPlaybackRestarted?()
             default:
@@ -149,8 +128,6 @@ class WebSocketManager: NSObject, ObservableObject {
 struct VLCVideoView: UIViewRepresentable {
     let url: URL?
     let vocalMode: String
-    let volume: Int
-    let isMuted: Bool
     
     func makeUIView(context: Context) -> UIView {
         let containerView = UIView()
@@ -158,8 +135,6 @@ struct VLCVideoView: UIViewRepresentable {
         
         let player = VLCMediaPlayer()
         player.drawable = containerView
-        player.audio?.volume = Int32(volume)
-        player.audio?.muted = isMuted
         
         if let url = url {
             let media = VLCMedia(url: url)
@@ -174,6 +149,7 @@ struct VLCVideoView: UIViewRepresentable {
         
         context.coordinator.player = player
         context.coordinator.lastURL = url
+        context.coordinator.lastVocalMode = vocalMode
         return containerView
     }
     
@@ -192,18 +168,6 @@ struct VLCVideoView: UIViewRepresentable {
             }
         }
         
-        // 音量变化
-        if context.coordinator.lastVolume != volume {
-            context.coordinator.lastVolume = volume
-            player.audio?.volume = Int32(volume)
-        }
-        
-        // 静音变化
-        if context.coordinator.lastMuted != isMuted {
-            context.coordinator.lastMuted = isMuted
-            player.audio?.muted = isMuted
-        }
-        
         // 原唱/伴唱变化
         if context.coordinator.lastVocalMode != vocalMode {
             context.coordinator.lastVocalMode = vocalMode
@@ -213,11 +177,8 @@ struct VLCVideoView: UIViewRepresentable {
     
     private func applyVocalMode(player: VLCMediaPlayer, mode: String) {
         // KTV mkv通常有2个音轨：0=伴奏，1=原唱
-        if mode == "original" {
-            player.audioTrackIndex = 1
-        } else {
-            player.audioTrackIndex = 0
-        }
+        let trackIndex: Int32 = (mode == "original") ? 1 : 0
+        player.audioTrackIndex = trackIndex
     }
     
     func makeCoordinator() -> Coordinator {
@@ -228,8 +189,6 @@ struct VLCVideoView: UIViewRepresentable {
         var player: VLCMediaPlayer?
         var lastURL: URL?
         var lastVocalMode: String = "accompaniment"
-        var lastVolume: Int = 100
-        var lastMuted: Bool = false
     }
 }
 
@@ -239,8 +198,6 @@ class PlayerManager: ObservableObject {
     @Published var showIdleScreen = true
     @Published var videoURL: URL?
     @Published var vocalMode: String = "accompaniment"
-    @Published var volume: Int = 100
-    @Published var isMuted: Bool = false
     
     let wsManager = WebSocketManager()
     private var timer: Timer?
@@ -257,12 +214,6 @@ class PlayerManager: ObservableObject {
         // WebSocket回调
         wsManager.onVocalChanged = { [weak self] mode in
             self?.vocalMode = mode
-        }
-        wsManager.onVolumeChanged = { [weak self] vol in
-            self?.volume = vol
-        }
-        wsManager.onMuteChanged = { [weak self] muted in
-            self?.isMuted = muted
         }
         wsManager.onPlaybackRestarted = { [weak self] in
             if let song = self?.currentSong {
@@ -299,15 +250,9 @@ class PlayerManager: ObservableObject {
             do {
                 let queue = try JSONDecoder().decode(KTVQueue.self, from: data)
                 DispatchQueue.main.async {
-                    // 初始化状态
+                    // 初始化vocalMode
                     if let mode = queue.vocalMode, self?.vocalMode == "accompaniment" {
                         self?.vocalMode = mode
-                    }
-                    if let vol = queue.volume, self?.volume == 100 {
-                        self?.volume = vol
-                    }
-                    if let muted = queue.muted, self?.isMuted == false {
-                        self?.isMuted = muted
                     }
                     
                     if let playing = queue.playing {
@@ -436,9 +381,7 @@ struct PlayerView: View {
         ZStack {
             VLCVideoView(
                 url: playerManager.videoURL,
-                vocalMode: playerManager.vocalMode,
-                volume: playerManager.volume,
-                isMuted: playerManager.isMuted
+                vocalMode: playerManager.vocalMode
             )
             .ignoresSafeArea()
             
