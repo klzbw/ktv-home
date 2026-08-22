@@ -781,7 +781,7 @@ class PlayerManager: ObservableObject {
                 }
             }
         }
-        wsManager.onVolumeChanged = { [weak self] volume, muted in
+        wsManager.onVolumeChanged = { [weak self] (volume: Int, muted: Bool) in
             print("onVolumeChanged回调被调用: volume=\(volume), muted=\(muted)")
             self?.addLog("📞 onVolumeChanged回调: volume=\(volume), muted=\(muted)", type: .info)
             DispatchQueue.main.async {
