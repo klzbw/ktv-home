@@ -28,6 +28,9 @@ enum KTVEffect: String {
     case fireworks = "fireworks"
     case whistle = "whistle"
     case scream = "scream"
+    case bell = "bell"
+    case drum = "drum"
+    case cymbal = "cymbal"
     case unknown = "unknown"
     
     var displayName: String {
@@ -38,6 +41,9 @@ enum KTVEffect: String {
         case .fireworks: return "烟花"
         case .whistle: return "口哨"
         case .scream: return "尖叫"
+        case .bell: return "铃声"
+        case .drum: return "鼓声"
+        case .cymbal: return "镲声"
         case .unknown: return "氛围"
         }
     }
@@ -63,6 +69,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
     @Published var showEffect = false
     @Published var debugLogs: [DebugLogEntry] = []
     @Published var lastMessage: String = ""
+    @Published var effectCount = 0
     
     private var webSocket: URLSessionWebSocketTask?
     private var session: URLSession?
@@ -171,6 +178,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                     self.onVocalChanged?(mode)
                 }
             case "effect":
+                // 尝试多种payload格式
                 var effectStr: String?
                 if let e = payload?["effect"] as? String {
                     effectStr = e
@@ -178,10 +186,13 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                     effectStr = e
                 } else if let e = payload?["name"] as? String {
                     effectStr = e
+                } else if let e = payload?["value"] as? String {
+                    effectStr = e
                 }
                 
                 if let effectStr = effectStr {
-                    self.addLog("氛围效果: \(effectStr)")
+                    self.effectCount += 1
+                    self.addLog("氛围效果 #\(self.effectCount): \(effectStr)")
                     let effect = KTVEffect(rawValue: effectStr) ?? .unknown
                     self.currentEffect = effect
                     self.showEffect = true
@@ -245,6 +256,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
 // MARK: - VLC播放器视图
 struct VLCVideoView: UIViewRepresentable {
     let url: URL?
+    let songId: Int?
     let onLog: ((String, DebugLogEntry.LogType) -> Void)?
     
     func makeUIView(context: Context) -> UIView {
@@ -263,24 +275,31 @@ struct VLCVideoView: UIViewRepresentable {
         
         context.coordinator.player = player
         context.coordinator.lastURL = url
+        context.coordinator.lastSongId = songId
         return containerView
     }
     
     func updateUIView(_ uiView: UIView, context: Context) {
         guard let player = context.coordinator.player else { return }
         
-        if let url = url, context.coordinator.lastURL != url {
-            onLog?("切换歌曲: \(url.lastPathComponent)", .info)
+        // 歌曲ID变化时重新播放
+        if let songId = songId, context.coordinator.lastSongId != songId {
+            onLog?("切换歌曲ID: \(songId)", .info)
+            context.coordinator.lastSongId = songId
             context.coordinator.lastURL = url
             
+            // 先停止旧播放
             player.stop()
             onLog?("停止旧播放", .info)
             
+            // 延迟开始新播放
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                let media = VLCMedia(url: url)
-                player.media = media
-                player.play()
-                onLog?("开始新播放", .info)
+                if let url = url {
+                    let media = VLCMedia(url: url)
+                    player.media = media
+                    player.play()
+                    self.onLog?("开始新播放: \(url.lastPathComponent)", .info)
+                }
             }
         }
     }
@@ -292,6 +311,7 @@ struct VLCVideoView: UIViewRepresentable {
     class Coordinator: NSObject {
         var player: VLCMediaPlayer?
         var lastURL: URL?
+        var lastSongId: Int?
     }
 }
 
@@ -401,28 +421,35 @@ class PlayerManager: ObservableObject {
 struct EffectOverlayView: View {
     let effect: KTVEffect
     let show: Bool
+    let count: Int
     
     var body: some View {
         ZStack {
             if show {
-                Color.black.opacity(0.4)
+                // 半透明背景
+                Color.black.opacity(0.5)
                     .ignoresSafeArea()
                 
+                // 氛围效果内容
                 VStack(spacing: 20) {
                     Image(systemName: effectIcon)
-                        .font(.system(size: 100))
+                        .font(.system(size: 120))
                         .foregroundColor(.yellow)
                         .shadow(color: .yellow, radius: 20)
                     
                     Text(effect.displayName)
-                        .font(.system(size: 40, weight: .bold))
+                        .font(.system(size: 48, weight: .bold))
                         .foregroundColor(.white)
                         .shadow(color: .black, radius: 3)
+                    
+                    Text("第 \(count) 次")
+                        .font(.system(size: 20))
+                        .foregroundColor(.gray)
                 }
                 .padding(50)
                 .background(
                     RoundedRectangle(cornerRadius: 30)
-                        .fill(Color.black.opacity(0.8))
+                        .fill(Color.black.opacity(0.85))
                 )
                 .transition(.scale.combined(with: .opacity))
             }
@@ -439,6 +466,9 @@ struct EffectOverlayView: View {
         case .fireworks: return "sparkles"
         case .whistle: return "wind"
         case .scream: return "exclamationmark.triangle"
+        case .bell: return "bell.fill"
+        case .drum: return "hifispeaker.fill"
+        case .cymbal: return "circle.fill"
         case .unknown: return "star.fill"
         }
     }
@@ -478,9 +508,11 @@ struct DebugPanelView: View {
                             .foregroundColor(.white)
                         Text("原唱/伴唱: \(wsManager.vocalMode)")
                             .foregroundColor(.white)
+                        Text("氛围效果次数: \(wsManager.effectCount)")
+                            .foregroundColor(.yellow)
                         Text("最近消息: \(wsManager.lastMessage)")
                             .foregroundColor(.yellow)
-                            .lineLimit(2)
+                            .lineLimit(3)
                     }
                     .font(.system(size: 12))
                     
@@ -497,14 +529,14 @@ struct DebugPanelView: View {
                                 .foregroundColor(.gray)
                             Text(log.message)
                                 .foregroundColor(logColor(log.type))
-                                .lineLimit(2)
+                                .lineLimit(3)
                         }
                         .font(.system(size: 10))
                     }
                 }
                 .padding()
             }
-            .frame(maxHeight: 300)
+            .frame(maxHeight: 350)
             .background(Color.black.opacity(0.85))
         }
         .cornerRadius(12)
@@ -628,6 +660,7 @@ struct PlayerView: View {
             // VLC播放器（最底层）
             VLCVideoView(
                 url: playerManager.videoURL,
+                songId: playerManager.currentSong?.id,
                 onLog: { message, type in
                     let formatter = DateFormatter()
                     formatter.dateFormat = "HH:mm:ss"
@@ -645,7 +678,11 @@ struct PlayerView: View {
             
             // 氛围效果覆盖层（中间层）
             if let effect = playerManager.wsManager.currentEffect {
-                EffectOverlayView(effect: effect, show: playerManager.wsManager.showEffect)
+                EffectOverlayView(
+                    effect: effect,
+                    show: playerManager.wsManager.showEffect,
+                    count: playerManager.wsManager.effectCount
+                )
             }
             
             // 扫码提示页面（最上层）
