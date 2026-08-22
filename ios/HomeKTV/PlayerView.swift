@@ -548,7 +548,7 @@ class PlayerManager: ObservableObject {
         }
     }
     
-    // 直接切换音轨（原唱/伴唱）
+    // 直接切换音轨（原唱/伴唱）- 安全版本，避免KVC崩溃
     func switchVocalMode(_ mode: String) {
         vocalMode = mode
         print("PlayerManager.switchVocalMode() 被调用, mode: \(mode), vlcPlayer是否为nil: \(vlcPlayer == nil)")
@@ -561,38 +561,44 @@ class PlayerManager: ObservableObject {
         let targetIndex: Int32 = (mode == "original") ? 1 : 0
         addLog("切换音轨到: \(mode) (索引\(targetIndex))", type: .info)
         
-        // 打印可用音轨
-        if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
-            addLog("可用音轨: \(trackNames)", type: .info)
-            print("可用音轨: \(trackNames)")
+        // 安全地打印可用音轨（使用responds(to:)检查）
+        if player.responds(to: Selector(("audioTrackNames"))) {
+            if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
+                addLog("可用音轨: \(trackNames)", type: .info)
+                print("可用音轨: \(trackNames)")
+            }
         }
         
-        // 打印当前音轨
-        if let currentTrack = player.value(forKey: "audioTrackIndex") as? Int32 {
-            print("当前音轨索引: \(currentTrack)")
-        }
-        
-        // 方法1：通过audio对象设置trackNumber
-        if let audio = player.value(forKey: "audio") as AnyObject? {
-            audio.setValue(targetIndex, forKey: "trackNumber")
-            print("方法1: audio.trackNumber = \(targetIndex)")
+        // 安全地切换音轨：使用audio对象的trackNumber属性
+        // 先检查audio对象是否存在
+        if player.responds(to: Selector(("audio"))) {
+            if let audio = player.value(forKey: "audio") as AnyObject? {
+                // 检查audio对象是否有trackNumber属性
+                if audio.responds(to: Selector(("setTrackNumber:"))) {
+                    audio.setValue(targetIndex, forKey: "trackNumber")
+                    print("音轨切换成功: audio.trackNumber = \(targetIndex)")
+                    addLog("音轨切换成功: 索引\(targetIndex)", type: .info)
+                } else {
+                    print("audio对象没有trackNumber属性")
+                    addLog("audio对象没有trackNumber属性", type: .warning)
+                }
+            } else {
+                print("无法获取audio对象")
+                addLog("无法获取audio对象", type: .warning)
+            }
         } else {
-            print("方法1失败: 无法获取audio对象")
+            print("player没有audio属性")
+            addLog("player没有audio属性", type: .warning)
         }
-        
-        // 方法2：KVC设置audioTrackIndex
-        player.setValue(targetIndex, forKey: "audioTrackIndex")
-        print("方法2: audioTrackIndex = \(targetIndex)")
-        
-        // 方法3：尝试直接设置audio.trackNumber（通过键路径）
-        player.setValue(targetIndex, forKeyPath: "audio.trackNumber")
-        print("方法3: audio.trackNumber (键路径) = \(targetIndex)")
         
         // 延迟验证
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            if let currentTrack = player.value(forKey: "audioTrackIndex") as? Int32 {
-                print("0.5秒后验证 - 当前音轨索引: \(currentTrack), 目标: \(targetIndex)")
-                self.addLog("音轨验证: 当前\(currentTrack)/目标\(targetIndex)", type: .info)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self, let player = self.vlcPlayer else { return }
+            if player.responds(to: Selector(("audioTrackIndex"))) {
+                if let currentTrack = player.value(forKey: "audioTrackIndex") as? Int32 {
+                    print("0.5秒后验证 - 当前音轨索引: \(currentTrack), 目标: \(targetIndex)")
+                    self.addLog("音轨验证: 当前\(currentTrack)/目标\(targetIndex)", type: .info)
+                }
             }
         }
     }
