@@ -333,6 +333,24 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
     }
 }
 
+// MARK: - 应用音轨模式（原唱/伴唱）全局函数
+func applyVocalMode(player: VLCMediaPlayer, mode: String) {
+    // KTV mkv文件通常有2个音轨：
+    // 音轨0 = 伴奏（accompaniment）
+    // 音轨1 = 原唱（original）
+    let trackIndex: Int32
+    if mode == "original" {
+        trackIndex = 1  // 原唱
+    } else {
+        trackIndex = 0  // 伴奏
+    }
+    
+    // 使用KVC方式设置音轨索引（避免直接赋值的编译问题）
+    player.setValue(trackIndex, forKey: "audioTrackIndex")
+    
+    print("应用音轨模式: \(mode), 音轨索引: \(trackIndex)")
+}
+
 // MARK: - VLC播放器视图
 struct VLCVideoView: UIViewRepresentable {
     let url: URL?
@@ -358,7 +376,7 @@ struct VLCVideoView: UIViewRepresentable {
             
             // 延迟应用音轨模式（等待媒体加载完成）
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                VLCVideoView.applyVocalMode(player: player, mode: vocalMode)
+                applyVocalMode(player: player, mode: vocalMode)
             }
         }
         
