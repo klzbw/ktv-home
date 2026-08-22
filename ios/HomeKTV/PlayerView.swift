@@ -411,35 +411,6 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
 }
 
 // MARK: - 应用音轨模式（原唱/伴唱）全局函数
-func applyVocalMode(player: VLCMediaPlayer, mode: String) {
-    print("========== 音轨切换 ==========")
-    print("目标模式: \(mode), isPlaying: \(player.isPlaying)")
-    
-    // KTV mkv文件通常有2个音轨：
-    // 音轨0 = 伴奏（accompaniment）
-    // 音轨1 = 原唱（original）
-    let targetIndex: Int32 = (mode == "original") ? 1 : 0
-    
-    // 方法1：直接访问audio对象并设置trackNumber（MobileVLCKit标准API）
-    // VLCMediaPlayer.audio 是 VLCAudio 对象，有 trackNumber 属性
-    if let audio = player.value(forKey: "audio") as AnyObject? {
-        audio.setValue(targetIndex, forKey: "trackNumber")
-        print("方法1成功: audio.trackNumber = \(targetIndex)")
-    } else {
-        print("方法1失败: 无法获取audio对象")
-    }
-    
-    // 方法2：KVC设置audioTrackIndex（备用）
-    player.setValue(targetIndex, forKey: "audioTrackIndex")
-    print("方法2: audioTrackIndex KVC = \(targetIndex)")
-    
-    // 打印可用音轨列表（调试用）
-    if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
-        print("可用音轨: \(trackNames)")
-    }
-    
-    print("========== 音轨切换结束 ==========")
-}
 
 // MARK: - VLC播放器视图
 struct VLCVideoView: UIViewRepresentable {
