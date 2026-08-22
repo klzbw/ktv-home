@@ -568,6 +568,8 @@ class PlayerManager: ObservableObject {
     @Published var vocalMode: String = "accompaniment"
     @Published var debugLogs: [DebugLogEntry] = []
     @Published var isPlaying: Bool = false
+    @Published var currentVolume: Int = 50
+    @Published var showVolumeIndicator: Bool = false
     
     let wsManager = WebSocketManager()
     private var timer: Timer?
@@ -631,6 +633,12 @@ class PlayerManager: ObservableObject {
         }
         
         let safeVolume = max(0, min(100, volume))
+        currentVolume = Int(safeVolume)
+        showVolumeIndicator = true
+        // 2秒后隐藏音量指示器
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.showVolumeIndicator = false
+        }
         addLog("🔊 设置音量: \(safeVolume)", type: .info)
         
         // 方法1：通过audio对象设置volume（有responds(to:)检查）
@@ -660,6 +668,10 @@ class PlayerManager: ObservableObject {
             return
         }
         
+        showVolumeIndicator = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.showVolumeIndicator = false
+        }
         addLog("🔇 设置静音: \(muted)", type: .info)
         
         // 方法1：通过audio对象设置muted（有responds(to:)检查）
