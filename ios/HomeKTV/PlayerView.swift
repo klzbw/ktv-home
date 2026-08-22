@@ -43,13 +43,26 @@ enum KTVEffect: String {
     }
 }
 
+// MARK: - 调试日志条目
+struct DebugLogEntry: Identifiable {
+    let id = UUID()
+    let time: String
+    let message: String
+    let type: LogType
+    
+    enum LogType {
+        case info, warning, error, websocket
+    }
+}
+
 // MARK: - WebSocket管理器
 class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate {
     @Published var isConnected = false
     @Published var vocalMode: String = "accompaniment"
     @Published var currentEffect: KTVEffect?
     @Published var showEffect = false
-    @Published var lastMessageType: String = ""  // 调试用
+    @Published var debugLogs: [DebugLogEntry] = []
+    @Published var lastMessage: String = ""
     
     private var webSocket: URLSessionWebSocketTask?
     private var session: URLSession?
@@ -61,11 +74,28 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
     var onEffectChanged: ((KTVEffect) -> Void)?
     var onPlaybackRestarted: (() -> Void)?
     
+    private func addLog(_ message: String, type: DebugLogEntry.LogType = .info) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        let time = formatter.string(from: Date())
+        let entry = DebugLogEntry(time: time, message: message, type: type)
+        DispatchQueue.main.async {
+            self.debugLogs.insert(entry, at: 0)
+            if self.debugLogs.count > 50 {
+                self.debugLogs.removeLast()
+            }
+        }
+    }
+    
     func connect(host: String, port: Int) {
         self.host = host
         self.port = port
+        addLog("连接WebSocket: ws://\(host):\(port)/ws")
         
-        guard let url = URL(string: "ws://\(host):\(port)/ws") else { return }
+        guard let url = URL(string: "ws://\(host):\(port)/ws") else {
+            addLog("URL无效", type: .error)
+            return
+        }
         
         let config = URLSessionConfiguration.default
         session = URLSession(configuration: config, delegate: self, delegateQueue: OperationQueue.main)
@@ -77,6 +107,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
     }
     
     func disconnect() {
+        addLog("断开WebSocket")
         stopPing()
         webSocket?.cancel()
         webSocket = nil
@@ -93,18 +124,20 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
             case .success(let message):
                 switch message {
                 case .string(let text):
-                    print("WebSocket收到: \(text)")
+                    self.lastMessage = text
+                    self.addLog("收到: \(text)", type: .websocket)
                     self.handleMessage(text)
                 case .data(let data):
                     if let text = String(data: data, encoding: .utf8) {
-                        print("WebSocket收到(data): \(text)")
+                        self.lastMessage = text
+                        self.addLog("收到(data): \(text)", type: .websocket)
                         self.handleMessage(text)
                     }
                 @unknown default:
                     break
                 }
             case .failure(let error):
-                print("WebSocket错误: \(error.localizedDescription)")
+                self.addLog("WebSocket错误: \(error.localizedDescription)", type: .error)
                 self.isConnected = false
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     self?.connect(host: self?.host ?? "", port: self?.port ?? 8980)
@@ -118,10 +151,12 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
     private func handleMessage(_ text: String) {
         guard let data = text.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = json["type"] as? String else { return }
+              let type = json["type"] as? String else {
+            addLog("消息解析失败", type: .error)
+            return
+        }
         
         let payload = json["payload"] as? [String: Any]
-        lastMessageType = type
         
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -131,12 +166,11 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                 self.isConnected = true
             case "vocal_changed":
                 if let mode = payload?["mode"] as? String {
-                    print("vocal_changed: \(mode)")
+                    self.addLog("原唱/伴唱切换: \(mode)")
                     self.vocalMode = mode
                     self.onVocalChanged?(mode)
                 }
             case "effect":
-                // 尝试多种payload格式
                 var effectStr: String?
                 if let e = payload?["effect"] as? String {
                     effectStr = e
@@ -147,7 +181,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                 }
                 
                 if let effectStr = effectStr {
-                    print("effect: \(effectStr)")
+                    self.addLog("氛围效果: \(effectStr)")
                     let effect = KTVEffect(rawValue: effectStr) ?? .unknown
                     self.currentEffect = effect
                     self.showEffect = true
@@ -156,12 +190,14 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
                         self?.showEffect = false
                     }
+                } else {
+                    self.addLog("氛围效果payload解析失败: \(String(describing: payload))", type: .warning)
                 }
             case "playback_restarted":
-                print("playback_restarted")
+                self.addLog("播放重启")
                 self.onPlaybackRestarted?()
             default:
-                print("未处理的消息类型: \(type), payload: \(String(describing: payload))")
+                self.addLog("未处理: \(type)", type: .warning)
                 break
             }
         }
@@ -194,14 +230,14 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
         DispatchQueue.main.async {
             self.isConnected = true
-            print("WebSocket已连接")
+            self.addLog("WebSocket已连接")
         }
     }
     
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
         DispatchQueue.main.async {
             self.isConnected = false
-            print("WebSocket已断开")
+            self.addLog("WebSocket已断开")
         }
     }
 }
@@ -209,6 +245,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
 // MARK: - VLC播放器视图
 struct VLCVideoView: UIViewRepresentable {
     let url: URL?
+    let onLog: ((String, DebugLogEntry.LogType) -> Void)?
     
     func makeUIView(context: Context) -> UIView {
         let containerView = UIView()
@@ -221,6 +258,7 @@ struct VLCVideoView: UIViewRepresentable {
             let media = VLCMedia(url: url)
             player.media = media
             player.play()
+            onLog?("开始播放: \(url.lastPathComponent)", .info)
         }
         
         context.coordinator.player = player
@@ -231,20 +269,18 @@ struct VLCVideoView: UIViewRepresentable {
     func updateUIView(_ uiView: UIView, context: Context) {
         guard let player = context.coordinator.player else { return }
         
-        // URL变化时重新播放
         if let url = url, context.coordinator.lastURL != url {
-            print("切换歌曲: \(url.lastPathComponent)")
+            onLog?("切换歌曲: \(url.lastPathComponent)", .info)
             context.coordinator.lastURL = url
             
-            // 先停止旧播放
             player.stop()
+            onLog?("停止旧播放", .info)
             
-            // 延迟开始新播放，确保VLC准备好
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 let media = VLCMedia(url: url)
                 player.media = media
                 player.play()
-                print("开始播放新歌曲")
+                onLog?("开始新播放", .info)
             }
         }
     }
@@ -265,15 +301,30 @@ class PlayerManager: ObservableObject {
     @Published var showIdleScreen = true
     @Published var videoURL: URL?
     @Published var vocalMode: String = "accompaniment"
+    @Published var debugLogs: [DebugLogEntry] = []
     
     let wsManager = WebSocketManager()
     private var timer: Timer?
     private var host: String = ""
     private var port: Int = 8980
     
+    private func addLog(_ message: String, type: DebugLogEntry.LogType = .info) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        let time = formatter.string(from: Date())
+        let entry = DebugLogEntry(time: time, message: message, type: type)
+        DispatchQueue.main.async {
+            self.debugLogs.insert(entry, at: 0)
+            if self.debugLogs.count > 30 {
+                self.debugLogs.removeLast()
+            }
+        }
+    }
+    
     func configure(host: String, port: Int) {
         self.host = host
         self.port = port
+        addLog("配置: http://\(host):\(port)")
         
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.wsManager.connect(host: host, port: port)
@@ -285,7 +336,7 @@ class PlayerManager: ObservableObject {
         wsManager.onEffectChanged = { _ in }
         wsManager.onPlaybackRestarted = { [weak self] in
             if let song = self?.currentSong {
-                print("播放重启: \(song.title)")
+                self?.addLog("播放重启: \(song.title)", .info)
                 self?.videoURL = nil
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(song.id)")
@@ -325,14 +376,14 @@ class PlayerManager: ObservableObject {
                     
                     if let playing = queue.playing {
                         if self?.currentSong?.id != playing.song.id {
-                            print("检测到新歌曲: \(playing.song.title) - \(playing.song.artist) (ID: \(playing.song.id))")
+                            self?.addLog("检测到新歌: \(playing.song.title) - \(playing.song.artist) (ID: \(playing.song.id))", .info)
                             self?.currentSong = playing.song
                             self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(playing.song.id)")
                         }
                         self?.showIdleScreen = false
                     } else {
                         if self?.currentSong != nil {
-                            print("播放队列为空，停止播放")
+                            self?.addLog("播放队列为空", .info)
                             self?.currentSong = nil
                             self?.videoURL = nil
                         }
@@ -340,7 +391,7 @@ class PlayerManager: ObservableObject {
                     }
                 }
             } catch {
-                print("解析失败: \(error)")
+                self?.addLog("队列解析失败: \(error.localizedDescription)", .error)
             }
         }.resume()
     }
@@ -354,32 +405,30 @@ struct EffectOverlayView: View {
     var body: some View {
         ZStack {
             if show {
-                // 半透明背景
-                Color.black.opacity(0.3)
+                Color.black.opacity(0.4)
                     .ignoresSafeArea()
                 
-                // 氛围效果内容
                 VStack(spacing: 20) {
                     Image(systemName: effectIcon)
-                        .font(.system(size: 80))
+                        .font(.system(size: 100))
                         .foregroundColor(.yellow)
-                        .shadow(color: .yellow, radius: 10)
+                        .shadow(color: .yellow, radius: 20)
                     
                     Text(effect.displayName)
-                        .font(.system(size: 32, weight: .bold))
+                        .font(.system(size: 40, weight: .bold))
                         .foregroundColor(.white)
-                        .shadow(color: .black, radius: 2)
+                        .shadow(color: .black, radius: 3)
                 }
-                .padding(40)
+                .padding(50)
                 .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.black.opacity(0.7))
+                    RoundedRectangle(cornerRadius: 30)
+                        .fill(Color.black.opacity(0.8))
                 )
                 .transition(.scale.combined(with: .opacity))
-                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: show)
             }
         }
-        .allowsHitTesting(false)  // 不拦截点击事件
+        .allowsHitTesting(false)
+        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: show)
     }
     
     private var effectIcon: String {
@@ -391,6 +440,84 @@ struct EffectOverlayView: View {
         case .whistle: return "wind"
         case .scream: return "exclamationmark.triangle"
         case .unknown: return "star.fill"
+        }
+    }
+}
+
+// MARK: - 调试信息面板
+struct DebugPanelView: View {
+    @ObservedObject var wsManager: WebSocketManager
+    @ObservedObject var playerManager: PlayerManager
+    @Binding var showDebug: Bool
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // 标题栏
+            HStack {
+                Text("调试信息")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                Spacer()
+                Button(action: { showDebug = false }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.white)
+                }
+            }
+            .padding()
+            .background(Color.black.opacity(0.9))
+            
+            // 状态信息
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    Group {
+                        Text("WebSocket状态: \(wsManager.isConnected ? "已连接" : "未连接")")
+                            .foregroundColor(wsManager.isConnected ? .green : .red)
+                        Text("当前歌曲: \(playerManager.currentSong?.title ?? "无")")
+                            .foregroundColor(.white)
+                        Text("歌曲ID: \(playerManager.currentSong?.id ?? 0)")
+                            .foregroundColor(.white)
+                        Text("原唱/伴唱: \(wsManager.vocalMode)")
+                            .foregroundColor(.white)
+                        Text("最近消息: \(wsManager.lastMessage)")
+                            .foregroundColor(.yellow)
+                            .lineLimit(2)
+                    }
+                    .font(.system(size: 12))
+                    
+                    Divider()
+                        .background(Color.gray)
+                    
+                    Text("日志:")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.white)
+                    
+                    ForEach(wsManager.debugLogs) { log in
+                        HStack(alignment: .top) {
+                            Text(log.time)
+                                .foregroundColor(.gray)
+                            Text(log.message)
+                                .foregroundColor(logColor(log.type))
+                                .lineLimit(2)
+                        }
+                        .font(.system(size: 10))
+                    }
+                }
+                .padding()
+            }
+            .frame(maxHeight: 300)
+            .background(Color.black.opacity(0.85))
+        }
+        .cornerRadius(12)
+        .shadow(radius: 10)
+        .padding()
+    }
+    
+    private func logColor(_ type: DebugLogEntry.LogType) -> Color {
+        switch type {
+        case .info: return .white
+        case .warning: return .yellow
+        case .error: return .red
+        case .websocket: return .cyan
         }
     }
 }
@@ -494,12 +621,27 @@ struct IdleOverlayView: View {
 struct PlayerView: View {
     @ObservedObject var deviceManager: DeviceManager
     @StateObject private var playerManager = PlayerManager()
+    @State private var showDebug = false
     
     var body: some View {
         ZStack {
             // VLC播放器（最底层）
-            VLCVideoView(url: playerManager.videoURL)
-                .ignoresSafeArea()
+            VLCVideoView(
+                url: playerManager.videoURL,
+                onLog: { message, type in
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "HH:mm:ss"
+                    let time = formatter.string(from: Date())
+                    let entry = DebugLogEntry(time: time, message: message, type: type)
+                    DispatchQueue.main.async {
+                        self.playerManager.debugLogs.insert(entry, at: 0)
+                        if self.playerManager.debugLogs.count > 30 {
+                            self.playerManager.debugLogs.removeLast()
+                        }
+                    }
+                }
+            )
+            .ignoresSafeArea()
             
             // 氛围效果覆盖层（中间层）
             if let effect = playerManager.wsManager.currentEffect {
@@ -510,6 +652,33 @@ struct PlayerView: View {
             if playerManager.showIdleScreen {
                 IdleOverlayView(deviceManager: deviceManager, wsManager: playerManager.wsManager)
                     .transition(.opacity)
+            }
+            
+            // 调试按钮（右上角）
+            VStack {
+                HStack {
+                    Spacer()
+                    Button(action: { showDebug.toggle() }) {
+                        Image(systemName: "ladybug.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(.white)
+                            .padding(10)
+                            .background(Color.black.opacity(0.5))
+                            .clipShape(Circle())
+                    }
+                    .padding()
+                }
+                Spacer()
+            }
+            
+            // 调试面板
+            if showDebug {
+                DebugPanelView(
+                    wsManager: playerManager.wsManager,
+                    playerManager: playerManager,
+                    showDebug: $showDebug
+                )
+                .transition(.move(edge: .top))
             }
         }
         .onAppear {
