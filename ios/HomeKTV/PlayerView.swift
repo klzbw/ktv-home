@@ -240,10 +240,54 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
         case "pong":
             isConnected = true
         case "vocal_changed":
-            if let mode = payload?["mode"] as? String {
-                addLog("原唱/伴唱切换: \(mode)")
+            // 打印完整payload用于调试
+            if let payloadData = try? JSONSerialization.data(withJSONObject: payload ?? [:], options: .prettyPrinted),
+               let payloadStr = String(data: payloadData, encoding: .utf8) {
+                addLog("vocal_changed完整payload: \(payloadStr)", type: .websocket)
+                print("vocal_changed完整payload: \(payloadStr)")
+            }
+            
+            // 从多个位置尝试提取音轨模式
+            var mode: String? = nil
+            
+            // 位置1：payload.mode
+            if let m = payload?["mode"] as? String {
+                mode = m
+                addLog("从payload.mode获取: \(m)", type: .info)
+            }
+            // 位置2：payload.vocalMode
+            else if let m = payload?["vocalMode"] as? String {
+                mode = m
+                addLog("从payload.vocalMode获取: \(m)", type: .info)
+            }
+            // 位置3：payload.playing.vocalMode
+            else if let playing = payload?["playing"] as? [String: Any],
+                    let m = playing["vocalMode"] as? String {
+                mode = m
+                addLog("从playing.vocalMode获取: \(m)", type: .info)
+            }
+            // 位置4：payload.playing.song.vocalMode
+            else if let playing = payload?["playing"] as? [String: Any],
+                    let song = playing["song"] as? [String: Any],
+                    let m = song["vocalMode"] as? String {
+                mode = m
+                addLog("从playing.song.vocalMode获取: \(m)", type: .info)
+            }
+            
+            if let mode = mode {
+                addLog("原唱/伴唱切换: \(mode)", type: .info)
                 vocalMode = mode
                 onVocalChanged?(mode)
+            } else {
+                addLog("⚠️ vocal_changed消息中未找到mode字段", type: .warning)
+                // 尝试从playing对象中提取所有字段名
+                if let playing = payload?["playing"] as? [String: Any] {
+                    let keys = Array(playing.keys)
+                    addLog("playing对象字段: \(keys)", type: .warning)
+                }
+                if let allKeys = payload?.keys {
+                    addLog("payload字段: \(Array(allKeys))", type: .warning)
+                }
             }
         case "sync_full", "now_playing", "queue_updated":
             // 完整状态快照或播放状态更新
@@ -253,9 +297,16 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                 addLog("播放状态: \(state)")
                 onPlaybackControl?(state)
             }
-            // 提取音轨模式
-            if let mode = payload?["vocalMode"] as? String {
-                addLog("音轨模式(同步): \(mode)")
+            // 从多个位置提取音轨模式
+            var syncMode: String? = nil
+            if let m = payload?["vocalMode"] as? String {
+                syncMode = m
+            } else if let playing = payload?["playing"] as? [String: Any],
+                      let m = playing["vocalMode"] as? String {
+                syncMode = m
+            }
+            if let mode = syncMode {
+                addLog("音轨模式(同步): \(mode)", type: .info)
                 vocalMode = mode
                 onVocalChanged?(mode)
             }
