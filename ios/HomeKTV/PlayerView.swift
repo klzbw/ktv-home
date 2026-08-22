@@ -335,7 +335,14 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
 
 // MARK: - 应用音轨模式（原唱/伴唱）全局函数
 func applyVocalMode(player: VLCMediaPlayer, mode: String) {
+    // 打印当前音轨信息（调试用）
+    if let trackNames = player.audioTrackNames as? [String] {
+        print("可用音轨列表: \(trackNames)")
+    }
+    print("当前音轨索引: \(player.audioTrackIndex)")
+    
     // KTV mkv文件通常有2个音轨：
+    // 音轨-1 = 默认/禁用
     // 音轨0 = 伴奏（accompaniment）
     // 音轨1 = 原唱（original）
     let trackIndex: Int32
@@ -345,10 +352,25 @@ func applyVocalMode(player: VLCMediaPlayer, mode: String) {
         trackIndex = 0  // 伴奏
     }
     
-    // 使用KVC方式设置音轨索引（避免直接赋值的编译问题）
-    player.setValue(trackIndex, forKey: "audioTrackIndex")
+    // 方法1：使用audio.trackNumber（推荐）
+    if let audio = player.value(forKey: "audio") as? NSObject {
+        audio.setValue(trackIndex, forKey: "trackNumber")
+        print("使用audio.trackNumber设置音轨: \(trackIndex)")
+    }
     
-    print("应用音轨模式: \(mode), 音轨索引: \(trackIndex)")
+    // 方法2：使用audioTrackIndex KVC（备用）
+    player.setValue(trackIndex, forKey: "audioTrackIndex")
+    print("使用audioTrackIndex KVC设置音轨: \(trackIndex)")
+    
+    // 方法3：直接设置（如果API支持）
+    // player.audioTrackIndex = trackIndex
+    
+    print("应用音轨模式: \(mode), 目标音轨索引: \(trackIndex)")
+    
+    // 延迟验证是否生效
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+        print("验证 - 当前音轨索引: \(player.audioTrackIndex)")
+    }
 }
 
 // MARK: - VLC播放器视图
@@ -375,7 +397,8 @@ struct VLCVideoView: UIViewRepresentable {
             onLog?("开始播放: \(url.lastPathComponent)", .info)
             
             // 延迟应用音轨模式（等待媒体加载完成）
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                print("媒体加载完成，应用音轨模式")
                 applyVocalMode(player: player, mode: vocalMode)
             }
         }
