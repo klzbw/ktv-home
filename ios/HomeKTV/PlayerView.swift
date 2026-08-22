@@ -344,8 +344,7 @@ struct VLCVideoView: UIViewRepresentable {
         containerView.backgroundColor = .black
         containerView.contentMode = .scaleAspectFill
         containerView.clipsToBounds = true
-        // 确保视图自动调整大小以填充父视图
-        containerView.autoresizingMask = [.flexibleWidth, .flexibleHeight, .flexibleLeftMargin, .flexibleRightMargin, .flexibleTopMargin, .flexibleBottomMargin]
+        containerView.translatesAutoresizingMaskIntoConstraints = false
         
         let player = VLCMediaPlayer()
         player.drawable = containerView
@@ -371,8 +370,16 @@ struct VLCVideoView: UIViewRepresentable {
             player.drawable = uiView
         }
         
-        // 确保视图大小正确（横屏修复）
-        uiView.frame = UIScreen.main.bounds
+        // 确保视图填充整个父视图（横屏修复关键）
+        if let superview = uiView.superview {
+            NSLayoutConstraint.activate([
+                uiView.topAnchor.constraint(equalTo: superview.topAnchor),
+                uiView.bottomAnchor.constraint(equalTo: superview.bottomAnchor),
+                uiView.leadingAnchor.constraint(equalTo: superview.leadingAnchor),
+                uiView.trailingAnchor.constraint(equalTo: superview.trailingAnchor)
+            ])
+        }
+        
         uiView.setNeedsLayout()
         uiView.layoutIfNeeded()
         
@@ -516,7 +523,7 @@ class PlayerManager: ObservableObject {
     }
 }
 
-// MARK: - 氛围效果提示（不遮挡视频，右上角小提示）
+// MARK: - 氛围效果覆盖层（鼓掌中间大图标，喝彩满屏动画刷过）
 struct EffectOverlayView: View {
     let effect: KTVEffect
     let show: Bool
@@ -524,65 +531,214 @@ struct EffectOverlayView: View {
     
     @State private var animate = false
     @State private var pulse = false
+    @State private var particles: [Particle] = []
+    
+    struct Particle: Identifiable {
+        let id = UUID()
+        let x: CGFloat
+        let y: CGFloat
+        let size: CGFloat
+        let opacity: Double
+        let delay: Double
+    }
     
     var body: some View {
         GeometryReader { geometry in
-            VStack {
-                HStack {
-                    Spacer()
-                    
-                    if show {
-                        // 右上角小提示，不遮挡视频
-                        HStack(spacing: 12) {
-                            // 图标 - 带动画
+            ZStack {
+                if show {
+                    // 根据效果类型显示不同的动画
+                    switch effect {
+                    case .applause, .clap:
+                        // 鼓掌：中间大图标显示
+                        VStack(spacing: 20) {
+                            Spacer()
+                            
                             Image(systemName: effect.iconName)
-                                .font(.system(size: 32))
+                                .font(.system(size: 120))
                                 .foregroundColor(effect.color)
-                                .shadow(color: effect.color, radius: 5)
-                                .scaleEffect(pulse ? 1.2 : 0.8)
-                                .rotationEffect(.degrees(animate ? 10 : -10))
+                                .shadow(color: effect.color, radius: 20)
+                                .scaleEffect(pulse ? 1.3 : 0.9)
+                                .rotationEffect(.degrees(animate ? 15 : -15))
                                 .animation(
                                     Animation.easeInOut(duration: 0.5)
                                         .repeatForever(autoreverses: true),
                                     value: animate
                                 )
                                 .animation(
+                                    Animation.spring(response: 0.4, dampingFraction: 0.4)
+                                        .repeatForever(autoreverses: true),
+                                    value: pulse
+                                )
+                            
+                            Text(effect.displayName)
+                                .font(.system(size: 48, weight: .bold))
+                                .foregroundColor(.white)
+                                .shadow(color: effect.color, radius: 10)
+                                .shadow(color: .black, radius: 3)
+                                .scaleEffect(pulse ? 1.15 : 1.0)
+                                .animation(
                                     Animation.spring(response: 0.3, dampingFraction: 0.5)
                                         .repeatForever(autoreverses: true),
                                     value: pulse
                                 )
                             
-                            // 文字
-                            VStack(alignment: .leading, spacing: 2) {
+                            Text("第 \(count) 次")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundColor(.white.opacity(0.9))
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 8)
+                                .background(
+                                    Capsule()
+                                        .fill(effect.color.opacity(0.3))
+                                )
+                            
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.black.opacity(0.3))
+                        .transition(.opacity)
+                        
+                    case .cheer:
+                        // 喝彩：满屏动画刷过（粒子效果）
+                        ZStack {
+                            // 半透明背景
+                            Color.black.opacity(0.2)
+                            
+                            // 粒子效果 - 从左到右刷过
+                            ForEach(particles) { particle in
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: particle.size))
+                                    .foregroundColor(effect.color)
+                                    .opacity(particle.opacity)
+                                    .position(x: particle.x, y: particle.y)
+                                    .offset(x: animate ? geometry.size.width + 100 : -100)
+                                    .animation(
+                                        Animation.linear(duration: 1.5)
+                                            .delay(particle.delay)
+                                            .repeatForever(autoreverses: false),
+                                        value: animate
+                                    )
+                            }
+                            
+                            // 中间文字
+                            VStack(spacing: 15) {
+                                Text("🎉")
+                                    .font(.system(size: 80))
+                                
                                 Text(effect.displayName)
-                                    .font(.system(size: 16, weight: .bold))
+                                    .font(.system(size: 48, weight: .bold))
                                     .foregroundColor(.white)
+                                    .shadow(color: effect.color, radius: 10)
+                                    .shadow(color: .black, radius: 3)
+                                
                                 Text("第 \(count) 次")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.white.opacity(0.7))
+                                    .font(.system(size: 20))
+                                    .foregroundColor(.white.opacity(0.9))
                             }
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 20)
-                                .fill(Color.black.opacity(0.6))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 20)
-                                .stroke(effect.color.opacity(0.5), lineWidth: 2)
-                        )
-                        .padding(.trailing, 20)
-                        .padding(.top, 60)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                        .transition(.opacity)
+                        
+                    case .boo, .hiss:
+                        // 倒彩：中间显示，红色调
+                        VStack(spacing: 20) {
+                            Spacer()
+                            
+                            Image(systemName: effect.iconName)
+                                .font(.system(size: 100))
+                                .foregroundColor(.red)
+                                .shadow(color: .red, radius: 15)
+                                .scaleEffect(pulse ? 1.2 : 0.9)
+                                .animation(
+                                    Animation.spring(response: 0.4, dampingFraction: 0.4)
+                                        .repeatForever(autoreverses: true),
+                                    value: pulse
+                                )
+                            
+                            Text(effect.displayName)
+                                .font(.system(size: 40, weight: .bold))
+                                .foregroundColor(.white)
+                                .shadow(color: .red, radius: 8)
+                            
+                            Text("第 \(count) 次")
+                                .font(.system(size: 18))
+                                .foregroundColor(.white.opacity(0.8))
+                            
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.black.opacity(0.4))
+                        .transition(.opacity)
+                        
+                    case .cheers, .toast:
+                        // 干杯：中间显示，橙色调，碰杯动画
+                        VStack(spacing: 20) {
+                            Spacer()
+                            
+                            HStack(spacing: -20) {
+                                Image(systemName: "wineglass.fill")
+                                    .font(.system(size: 80))
+                                    .foregroundColor(.orange)
+                                    .rotationEffect(.degrees(animate ? -20 : -10))
+                                    .offset(x: animate ? 10 : 0)
+                                
+                                Image(systemName: "wineglass.fill")
+                                    .font(.system(size: 80))
+                                    .foregroundColor(.yellow)
+                                    .rotationEffect(.degrees(animate ? 20 : 10))
+                                    .offset(x: animate ? -10 : 0)
+                            }
+                            .animation(
+                                Animation.easeInOut(duration: 0.5)
+                                    .repeatForever(autoreverses: true),
+                                value: animate
+                            )
+                            .shadow(color: .orange, radius: 15)
+                            
+                            Text(effect.displayName)
+                                .font(.system(size: 44, weight: .bold))
+                                .foregroundColor(.white)
+                                .shadow(color: .orange, radius: 10)
+                            
+                            Text("第 \(count) 次")
+                                .font(.system(size: 18))
+                                .foregroundColor(.white.opacity(0.8))
+                            
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.black.opacity(0.35))
+                        .transition(.opacity)
+                        
+                    case .unknown:
+                        // 未知：右上角小提示
+                        VStack {
+                            HStack {
+                                Spacer()
+                                HStack(spacing: 10) {
+                                    Image(systemName: effect.iconName)
+                                        .font(.system(size: 28))
+                                        .foregroundColor(.white)
+                                    Text(effect.displayName)
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundColor(.white)
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color.black.opacity(0.6))
+                                .cornerRadius(15)
+                                .padding(.trailing, 20)
+                                .padding(.top, 60)
+                            }
+                            Spacer()
+                        }
                     }
                 }
-                Spacer()
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .onAppear {
                 animate = true
                 pulse = true
+                createParticles(in: geometry.size)
             }
             .onDisappear {
                 animate = false
@@ -591,6 +747,18 @@ struct EffectOverlayView: View {
         }
         .allowsHitTesting(false)
         .animation(.easeInOut(duration: 0.3), value: show)
+    }
+    
+    private func createParticles(in size: CGSize) {
+        particles = (0..<20).map { i in
+            Particle(
+                x: CGFloat.random(in: -50...size.width),
+                y: CGFloat.random(in: 0...size.height),
+                size: CGFloat.random(in: 15...40),
+                opacity: Double.random(in: 0.4...0.9),
+                delay: Double(i) * 0.08
+            )
+        }
     }
 }
 
