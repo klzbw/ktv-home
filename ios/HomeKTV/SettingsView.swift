@@ -25,18 +25,21 @@ struct SettingsView: View {
                     }
                     .disabled(address.isEmpty)
 
-                    Button("取消") {
-                        showSettings = false
-                    }
-
                     Button("清除配置", role: .destructive) {
                         config.serverAddress = ""
-                        showSettings = false
+                        address = ""
                     }
                 }
             }
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("完成") {
+                        showSettings = false
+                    }
+                }
+            }
         }
     }
 }
