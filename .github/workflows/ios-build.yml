@@ -31,43 +31,39 @@ jobs:
           cd ios
           xcodebuild archive             -project HomeKTV.xcodeproj             -scheme HomeKTV             -configuration Release             -destination 'generic/platform=iOS'             -archivePath build/HomeKTV.xcarchive             CODE_SIGN_IDENTITY=""             CODE_SIGNING_REQUIRED=NO             CODE_SIGNING_ALLOWED=NO
 
-      - name: Create exportOptions.plist
+      - name: Package IPA manually
         run: |
           cd ios
-          cat > exportOptions.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>development</string>
-              <key>compileBitcode</key>
-              <false/>
-              <key>uploadSymbols</key>
-              <false/>
-          </dict>
-          </plist>
-          EOF
-          cat exportOptions.plist
-
-      - name: Export IPA (unsigned)
-        run: |
-          cd ios
-          mkdir -p build/ipa
-          xcodebuild -exportArchive             -archivePath build/HomeKTV.xcarchive             -exportPath build/ipa             -exportOptionsPlist exportOptions.plist             CODE_SIGN_IDENTITY=""             CODE_SIGNING_REQUIRED=NO             CODE_SIGNING_ALLOWED=NO
-
-      - name: List build output
-        run: |
-          cd ios
-          ls -la build/
-          ls -la build/ipa/ || echo "ipa目录为空"
-          find build -name "*.ipa" -o -name "*.app" 2>/dev/null || echo "未找到ipa或app文件"
+          # 查找.app文件
+          APP_PATH=$(find build/HomeKTV.xcarchive -name "*.app" -type d | head -1)
+          echo "找到APP: $APP_PATH"
+          
+          if [ -z "$APP_PATH" ]; then
+            echo "错误：未找到.app文件"
+            ls -la build/HomeKTV.xcarchive/
+            ls -la build/HomeKTV.xcarchive/Products/ 2>/dev/null || echo "Products目录不存在"
+            find build/HomeKTV.xcarchive -type d
+            exit 1
+          fi
+          
+          # 创建IPA结构
+          mkdir -p build/ipa/Payload
+          cp -R "$APP_PATH" build/ipa/Payload/
+          
+          # 压缩成IPA
+          cd build/ipa
+          zip -r HomeKTV.ipa Payload/
+          cd ../..
+          
+          # 验证IPA
+          ls -la build/ipa/HomeKTV.ipa
+          echo "IPA创建成功！"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: HomeKTV-iOS-ipa
-          path: ios/build/ipa/*.ipa
+          path: ios/build/ipa/HomeKTV.ipa
           if-no-files-found: error
 
       - name: Create Release
@@ -76,6 +72,6 @@ jobs:
         with:
           tag_name: ios-v1.0.${{ github.run_number }}
           name: iOS v1.0.${{ github.run_number }}
-          files: ios/build/ipa/*.ipa
+          files: ios/build/ipa/HomeKTV.ipa
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
