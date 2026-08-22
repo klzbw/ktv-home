@@ -35,30 +35,65 @@ struct KTVQueue: Codable {
     let connectedPhones: Int?
 }
 
-// MARK: - 播放管理器
-class PlayerManager: NSObject, ObservableObject {
-    @Published var currentSong: KTVSong?
-    @Published var isPlaying = false
-    @Published var queue: KTVQueue?
-    @Published var showIdleScreen = true
-    @Published var errorMessage: String?
-    
+// MARK: - VLC播放器视图控制器
+class VLCPlayerViewController: UIViewController {
     var mediaPlayer: VLCMediaPlayer?
-    private var timer: Timer?
-    private var host: String = ""
-    private var port: Int = 8980
+    private var playerView: UIView!
     
-    override init() {
-        super.init()
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        
+        // 创建播放器视图容器
+        playerView = UIView(frame: view.bounds)
+        playerView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        playerView.backgroundColor = .black
+        view.addSubview(playerView)
+        
+        // 初始化VLC播放器
         setupPlayer()
     }
     
     func setupPlayer() {
         if mediaPlayer == nil {
             mediaPlayer = VLCMediaPlayer()
-            mediaPlayer?.delegate = self
+            // 设置drawable为playerView
+            mediaPlayer?.drawable = playerView
         }
     }
+    
+    func play(url: URL) {
+        setupPlayer()
+        
+        let media = VLCMedia(url: url)
+        mediaPlayer?.media = media
+        mediaPlayer?.play()
+        
+        print("VLC开始播放: \(url.absoluteString)")
+    }
+    
+    func stop() {
+        mediaPlayer?.stop()
+    }
+    
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        playerView.frame = view.bounds
+    }
+}
+
+// MARK: - 播放管理器
+class PlayerManager: ObservableObject {
+    @Published var currentSong: KTVSong?
+    @Published var isPlaying = false
+    @Published var queue: KTVQueue?
+    @Published var showIdleScreen = true
+    @Published var errorMessage: String?
+    
+    weak var playerVC: VLCPlayerViewController?
+    private var timer: Timer?
+    private var host: String = ""
+    private var port: Int = 8980
     
     func configure(host: String, port: Int) {
         self.host = host
@@ -97,19 +132,16 @@ class PlayerManager: NSObject, ObservableObject {
                     self?.errorMessage = nil
                     
                     if let playing = queue.playing {
-                        // 有歌曲在播放
                         if self?.currentSong?.id != playing.song.id {
-                            // 切换到新歌曲
                             self?.currentSong = playing.song
                             self?.playSong(playing.song)
                         }
                         self?.showIdleScreen = false
                         self?.isPlaying = true
                     } else {
-                        // 没有歌曲在播放
                         if self?.currentSong != nil {
                             self?.currentSong = nil
-                            self?.mediaPlayer?.stop()
+                            self?.playerVC?.stop()
                         }
                         self?.isPlaying = false
                         self?.showIdleScreen = true
@@ -117,121 +149,55 @@ class PlayerManager: NSObject, ObservableObject {
                 }
             } catch {
                 print("解析队列失败: \(error)")
-                DispatchQueue.main.async {
-                    self?.errorMessage = "解析失败: \(error.localizedDescription)"
-                }
             }
         }.resume()
     }
     
     func playSong(_ song: KTVSong) {
-        setupPlayer()
-        
         guard let url = URL(string: "http://\(host):\(port)/api/stream/\(song.id)") else {
             errorMessage = "无效的视频地址"
             return
         }
         
-        print("开始播放: \(song.title) - \(song.artist)")
-        print("视频地址: \(url.absoluteString)")
-        
-        let media = VLCMedia(url: url)
-        mediaPlayer?.media = media
-        mediaPlayer?.play()
-        
-        // 设置音频轨道（原唱/伴奏）
-        // VLC会自动处理多音轨
+        playerVC?.play(url: url)
     }
     
     deinit {
         stopPolling()
-        mediaPlayer?.stop()
-    }
-}
-
-// MARK: - VLC播放器代理
-extension PlayerManager: VLCMediaPlayerDelegate {
-    func mediaPlayerStateChanged(_ aNotification: Notification) {
-        guard let player = aNotification.object as? VLCMediaPlayer else { return }
-        
-        DispatchQueue.main.async {
-            switch player.state {
-            case .playing:
-                self.isPlaying = true
-                self.errorMessage = nil
-                print("VLC: 正在播放")
-            case .paused:
-                self.isPlaying = false
-                print("VLC: 已暂停")
-            case .stopped:
-                self.isPlaying = false
-                print("VLC: 已停止")
-            case .ended:
-                self.isPlaying = false
-                print("VLC: 播放结束")
-            case .error:
-                self.errorMessage = "播放错误"
-                print("VLC: 错误")
-            default:
-                break
-            }
-        }
-    }
-    
-    func mediaPlayerTimeChanged(_ aNotification: Notification) {
-        // 播放时间变化
+        playerVC?.stop()
     }
 }
 
 // MARK: - TV播放视图
-struct TVPlayerView: View {
+struct TVPlayerView: UIViewControllerRepresentable {
     @ObservedObject var deviceManager: DeviceManager
     @StateObject private var playerManager = PlayerManager()
     
-    var body: some View {
-        ZStack {
-            if playerManager.showIdleScreen {
-                // 扫码提示页面
-                IdleScreenView(deviceManager: deviceManager, playerManager: playerManager)
-            } else {
-                // 视频播放页面
-                VLCPlayerView(playerManager: playerManager)
-                    .ignoresSafeArea()
-            }
-            
-            // 错误提示
-            if let error = playerManager.errorMessage {
-                VStack {
-                    Spacer()
-                    Text(error)
-                        .foregroundColor(.white)
-                        .padding()
-                        .background(Color.red.opacity(0.8))
-                        .cornerRadius(8)
-                        .padding(.bottom, 20)
-                }
-            }
+    func makeUIViewController(context: Context) -> VLCPlayerViewController {
+        let vc = VLCPlayerViewController()
+        playerManager.playerVC = vc
+        return vc
+    }
+    
+    func updateUIViewController(_ uiViewController: VLCPlayerViewController, context: Context) {
+        if let device = deviceManager.connectedDevice {
+            playerManager.configure(host: device.host, port: device.port)
         }
-        .onAppear {
-            if let device = deviceManager.connectedDevice {
-                playerManager.configure(host: device.host, port: device.port)
-            }
-        }
-        .onDisappear {
-            playerManager.stopPolling()
-        }
+    }
+    
+    static func dismantleUIViewController(_ uiViewController: VLCPlayerViewController, coordinator: ()) {
+        uiViewController.stop()
     }
 }
 
-// MARK: - 扫码提示页面
-struct IdleScreenView: View {
+// MARK: - 扫码提示页面（作为覆盖层）
+struct IdleOverlayView: View {
     @ObservedObject var deviceManager: DeviceManager
     @ObservedObject var playerManager: PlayerManager
     @State private var qrImage: UIImage?
     
     var body: some View {
         ZStack {
-            // 背景
             LinearGradient(
                 gradient: Gradient(colors: [Color(red: 0.05, green: 0.05, blue: 0.15), Color(red: 0.1, green: 0.05, blue: 0.2)]),
                 startPoint: .topLeading,
@@ -240,7 +206,6 @@ struct IdleScreenView: View {
             .ignoresSafeArea()
             
             VStack(spacing: 30) {
-                // 标题
                 VStack(spacing: 8) {
                     Text("家庭KTV")
                         .font(.system(size: 48, weight: .bold))
@@ -255,9 +220,7 @@ struct IdleScreenView: View {
                 
                 Spacer()
                 
-                // 中间内容
                 HStack(spacing: 60) {
-                    // 左侧信息
                     VStack(alignment: .leading, spacing: 20) {
                         Text("手机点歌，电视欢唱")
                             .font(.system(size: 28, weight: .bold))
@@ -267,7 +230,6 @@ struct IdleScreenView: View {
                             .font(.system(size: 18))
                             .foregroundColor(.gray)
                         
-                        // 统计信息
                         HStack(spacing: 30) {
                             StatView(title: "曲库", value: "\(playerManager.queue?.list?.count ?? 0)首")
                             StatView(title: "已点", value: "\(playerManager.queue?.list?.count ?? 0)首")
@@ -276,7 +238,6 @@ struct IdleScreenView: View {
                         .padding(.top, 20)
                     }
                     
-                    // 右侧二维码
                     VStack(spacing: 16) {
                         if let qrImage = qrImage {
                             Image(uiImage: qrImage)
@@ -289,9 +250,7 @@ struct IdleScreenView: View {
                             RoundedRectangle(cornerRadius: 12)
                                 .fill(Color.white)
                                 .frame(width: 200, height: 200)
-                                .overlay(
-                                    ProgressView()
-                                )
+                                .overlay(ProgressView())
                         }
                         
                         Text("扫码点歌")
@@ -308,16 +267,13 @@ struct IdleScreenView: View {
                 
                 Spacer()
                 
-                // 底部提示
                 Text("等待点歌中...")
                     .font(.system(size: 16))
                     .foregroundColor(.gray)
                     .padding(.bottom, 30)
             }
         }
-        .onAppear {
-            generateQRCode()
-        }
+        .onAppear { generateQRCode() }
     }
     
     func generateQRCode() {
@@ -354,7 +310,6 @@ struct StatView: View {
             Text(value)
                 .font(.system(size: 24, weight: .bold))
                 .foregroundColor(.white)
-            
             Text(title)
                 .font(.system(size: 14))
                 .foregroundColor(.gray)
@@ -362,44 +317,43 @@ struct StatView: View {
     }
 }
 
-// MARK: - VLC播放器视图
-struct VLCPlayerView: UIViewRepresentable {
-    @ObservedObject var playerManager: PlayerManager
+// MARK: - 主播放视图（包含扫码覆盖层）
+struct PlayerView: View {
+    @ObservedObject var deviceManager: DeviceManager
+    @StateObject private var playerManager = PlayerManager()
     
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .black
-        
-        // 确保player已创建
-        playerManager.setupPlayer()
-        
-        if let player = playerManager.mediaPlayer {
-            // 将VLC播放器的视图添加到容器
-            if let vlcView = player.views?.first as? UIView {
-                vlcView.frame = view.bounds
-                vlcView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-                view.addSubview(vlcView)
+    var body: some View {
+        ZStack {
+            // VLC播放器
+            TVPlayerView(deviceManager: deviceManager)
+                .ignoresSafeArea()
+            
+            // 扫码提示覆盖层
+            if playerManager.showIdleScreen {
+                IdleOverlayView(deviceManager: deviceManager, playerManager: playerManager)
+                    .transition(.opacity)
             }
-        }
-        
-        return view
-    }
-    
-    func updateUIView(_ uiView: UIView, context: Context) {
-        // 更新播放器视图
-        if let player = playerManager.mediaPlayer {
-            if let vlcView = player.views?.first as? UIView {
-                if vlcView.superview !== uiView {
-                    vlcView.frame = uiView.bounds
-                    vlcView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-                    uiView.addSubview(vlcView)
-                } else {
-                    vlcView.frame = uiView.bounds
+            
+            // 错误提示
+            if let error = playerManager.errorMessage {
+                VStack {
+                    Spacer()
+                    Text(error)
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.red.opacity(0.8))
+                        .cornerRadius(8)
+                        .padding(.bottom, 20)
                 }
             }
         }
+        .onAppear {
+            if let device = deviceManager.connectedDevice {
+                playerManager.configure(host: device.host, port: device.port)
+            }
+        }
+        .onDisappear {
+            playerManager.stopPolling()
+        }
     }
 }
-
-// MARK: - 兼容旧的PlayerView名称
-typealias PlayerView = TVPlayerView
