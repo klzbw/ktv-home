@@ -1161,11 +1161,11 @@ struct PlayerView: View {
                         }
                     }
                 },
-                onPlayerReady: { [weak self] player in
+                onPlayerReady: { player in
                     // 将VLC播放器引用传递给PlayerManager，用于直接控制播放/暂停/音轨
-                    print("PlayerView.onPlayerReady - 被调用, player是否为nil: \(player == nil)")
-                    self?.playerManager.vlcPlayer = player
-                    print("PlayerView.onPlayerReady - 已设置playerManager.vlcPlayer, 是否为nil: \(self?.playerManager.vlcPlayer == nil)")
+                    print("PlayerView.onPlayerReady - 被调用")
+                    self.playerManager.vlcPlayer = player
+                    print("PlayerView.onPlayerReady - 已设置playerManager.vlcPlayer")
                 }
             )
             .ignoresSafeArea()
