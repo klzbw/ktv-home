@@ -1,8 +1,7 @@
 import SwiftUI
+import MobileVLCKit
 import AVKit
-import Combine
 
-// MARK: - 数据模型
 struct KTVSong: Codable {
     let id: Int
     let title: String
@@ -17,16 +16,54 @@ struct KTVQueueItem: Codable {
 struct KTVQueue: Codable {
     let playing: KTVQueueItem?
     let list: [KTVQueueItem]?
-    let vocalMode: String?
 }
 
-// MARK: - 播放管理器
+// VLC播放器视图
+struct VLCVideoView: UIViewRepresentable {
+    let url: URL?
+    
+    func makeUIView(context: Context) -> UIView {
+        let containerView = UIView()
+        containerView.backgroundColor = .black
+        
+        let player = VLCMediaPlayer()
+        player.drawable = containerView
+        
+        if let url = url {
+            let media = VLCMedia(url: url)
+            player.media = media
+            player.play()
+        }
+        
+        context.coordinator.player = player
+        return containerView
+    }
+    
+    func updateUIView(_ uiView: UIView, context: Context) {
+        if let url = url, context.coordinator.lastURL != url {
+            context.coordinator.lastURL = url
+            let media = VLCMedia(url: url)
+            context.coordinator.player?.media = media
+            context.coordinator.player?.play()
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
+    class Coordinator: NSObject {
+        var player: VLCMediaPlayer?
+        var lastURL: URL?
+    }
+}
+
+// 播放管理器
 class PlayerManager: ObservableObject {
     @Published var currentSong: KTVSong?
     @Published var showIdleScreen = true
-    @Published var queue: KTVQueue?
+    @Published var videoURL: URL?
     
-    var player: AVPlayer?
     private var timer: Timer?
     private var host: String = ""
     private var port: Int = 8980
@@ -34,9 +71,6 @@ class PlayerManager: ObservableObject {
     func configure(host: String, port: Int) {
         self.host = host
         self.port = port
-        if player == nil {
-            player = AVPlayer()
-        }
         startPolling()
     }
     
@@ -62,18 +96,16 @@ class PlayerManager: ObservableObject {
             do {
                 let queue = try JSONDecoder().decode(KTVQueue.self, from: data)
                 DispatchQueue.main.async {
-                    self?.queue = queue
-                    
                     if let playing = queue.playing {
                         if self?.currentSong?.id != playing.song.id {
                             self?.currentSong = playing.song
-                            self?.playSong(playing.song)
+                            self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(playing.song.id)")
                         }
                         self?.showIdleScreen = false
                     } else {
                         if self?.currentSong != nil {
                             self?.currentSong = nil
-                            self?.player?.pause()
+                            self?.videoURL = nil
                         }
                         self?.showIdleScreen = true
                     }
@@ -83,45 +115,9 @@ class PlayerManager: ObservableObject {
             }
         }.resume()
     }
-    
-    func playSong(_ song: KTVSong) {
-        guard let url = URL(string: "http://\(host):\(port)/api/stream/\(song.id)") else { return }
-        
-        if player == nil {
-            player = AVPlayer()
-        }
-        
-        let playerItem = AVPlayerItem(url: url)
-        player?.replaceCurrentItem(with: playerItem)
-        player?.play()
-    }
-    
-    deinit {
-        stopPolling()
-        player?.pause()
-    }
 }
 
-// MARK: - 视频播放视图
-struct VideoPlayerView: UIViewControllerRepresentable {
-    @ObservedObject var playerManager: PlayerManager
-    
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let vc = AVPlayerViewController()
-        vc.player = playerManager.player
-        vc.showsPlaybackControls = false
-        vc.videoGravity = .resizeAspect
-        return vc
-    }
-    
-    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
-        if uiViewController.player !== playerManager.player {
-            uiViewController.player = playerManager.player
-        }
-    }
-}
-
-// MARK: - 扫码提示页面
+// 扫码提示页面
 struct IdleOverlayView: View {
     @ObservedObject var deviceManager: DeviceManager
     @State private var qrImage: UIImage?
@@ -205,14 +201,14 @@ struct IdleOverlayView: View {
     }
 }
 
-// MARK: - 主播放视图
+// 主播放视图
 struct PlayerView: View {
     @ObservedObject var deviceManager: DeviceManager
     @StateObject private var playerManager = PlayerManager()
     
     var body: some View {
         ZStack {
-            VideoPlayerView(playerManager: playerManager)
+            VLCVideoView(url: playerManager.videoURL)
                 .ignoresSafeArea()
             
             if playerManager.showIdleScreen {
