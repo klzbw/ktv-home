@@ -62,6 +62,6 @@ struct SettingsView: View {
 
             Spacer()
         }
-        .background(Color(UIColor.systemBackground))
+        .background(Color.black)
     }
 }
