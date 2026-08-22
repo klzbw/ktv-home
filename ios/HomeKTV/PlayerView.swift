@@ -1,6 +1,7 @@
 import SwiftUI
 import MobileVLCKit
 import Combine
+import AVFoundation
 
 // MARK: - 数据模型
 struct KTVSong: Codable {
@@ -26,6 +27,8 @@ enum KTVEffect: String {
     case cheer = "cheer"
     case laughter = "laughter"
     case fireworks = "fireworks"
+    case whistle = "whistle"
+    case scream = "scream"
     case unknown = "unknown"
     
     var displayName: String {
@@ -34,8 +37,41 @@ enum KTVEffect: String {
         case .cheer: return "欢呼"
         case .laughter: return "笑声"
         case .fireworks: return "烟花"
+        case .whistle: return "口哨"
+        case .scream: return "尖叫"
         case .unknown: return "氛围"
         }
+    }
+    
+    var systemSoundID: UInt32? {
+        // 使用系统音效
+        switch self {
+        case .applause: return 1104  // 点击声
+        case .cheer: return 1105
+        case .laughter: return 1106
+        case .fireworks: return 1107
+        case .whistle: return 1108
+        case .scream: return 1109
+        case .unknown: return nil
+        }
+    }
+}
+
+// MARK: - 氛围音效播放器
+class EffectSoundPlayer {
+    static let shared = EffectSoundPlayer()
+    
+    func playEffect(_ effect: KTVEffect) {
+        print("播放氛围效果: \(effect.displayName) (\(effect.rawValue))")
+        
+        // 尝试播放系统音效
+        if let soundID = effect.systemSoundID {
+            AudioServicesPlaySystemSound(soundID)
+        }
+        
+        // 也可以使用震动反馈
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.success)
     }
 }
 
@@ -45,6 +81,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
     @Published var vocalMode: String = "accompaniment"
     @Published var currentEffect: KTVEffect?
     @Published var showEffect = false
+    @Published var lastMessage: String = ""
     
     private var webSocket: URLSessionWebSocketTask?
     private var session: URLSession?
@@ -62,7 +99,6 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
         
         guard let url = URL(string: "ws://\(host):\(port)/ws") else { return }
         
-        // 使用单例session，避免创建多个session导致崩溃
         let config = URLSessionConfiguration.default
         session = URLSession(configuration: config, delegate: self, delegateQueue: OperationQueue.main)
         webSocket = session?.webSocketTask(with: url)
@@ -89,9 +125,14 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
             case .success(let message):
                 switch message {
                 case .string(let text):
+                    print("收到WebSocket消息: \(text)")
+                    DispatchQueue.main.async {
+                        self.lastMessage = text
+                    }
                     self.handleMessage(text)
                 case .data(let data):
                     if let text = String(data: data, encoding: .utf8) {
+                        print("收到WebSocket数据: \(text)")
                         self.handleMessage(text)
                     }
                 @unknown default:
@@ -100,7 +141,6 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
             case .failure(let error):
                 print("WebSocket错误: \(error.localizedDescription)")
                 self.isConnected = false
-                // 延迟重连
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
                     self?.connect(host: self?.host ?? "", port: self?.port ?? 8980)
                 }
@@ -117,6 +157,8 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
         
         let payload = json["payload"] as? [String: Any]
         
+        print("处理消息类型: \(type), payload: \(String(describing: payload))")
+        
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             
@@ -128,12 +170,20 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                     self.vocalMode = mode
                     self.onVocalChanged?(mode)
                 }
-            case "effect":
-                if let effectStr = payload?["effect"] as? String {
+            case "effect", "trigger_effect", "play_effect", "effect_trigger":
+                // 尝试多种字段名
+                let effectStr = payload?["effect"] as? String
+                    ?? payload?["type"] as? String
+                    ?? payload?["name"] as? String
+                    ?? payload?["id"] as? String
+                    ?? (payload?["effect"] as? [String: Any])?["type"] as? String
+                
+                if let effectStr = effectStr {
                     let effect = KTVEffect(rawValue: effectStr) ?? .unknown
                     self.currentEffect = effect
                     self.showEffect = true
                     self.onEffectChanged?(effect)
+                    EffectSoundPlayer.shared.playEffect(effect)
                     
                     DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
                         self?.showEffect = false
@@ -142,7 +192,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
             case "playback_restarted":
                 self.onPlaybackRestarted?()
             default:
-                break
+                print("未处理的消息类型: \(type)")
             }
         }
     }
@@ -171,7 +221,6 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
         }
     }
     
-    // URLSessionWebSocketDelegate
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
         DispatchQueue.main.async {
             self.isConnected = true
@@ -196,7 +245,6 @@ struct VLCVideoView: UIViewRepresentable {
         let containerView = UIView()
         containerView.backgroundColor = .black
         
-        // 在主线程初始化VLC播放器
         let player = VLCMediaPlayer()
         player.drawable = containerView
         
@@ -215,7 +263,6 @@ struct VLCVideoView: UIViewRepresentable {
     func updateUIView(_ uiView: UIView, context: Context) {
         guard let player = context.coordinator.player else { return }
         
-        // URL变化时重新播放
         if let url = url, context.coordinator.lastURL != url {
             context.coordinator.lastURL = url
             let media = VLCMedia(url: url)
@@ -251,18 +298,14 @@ class PlayerManager: ObservableObject {
         self.host = host
         self.port = port
         
-        // 延迟连接WebSocket，避免立即连接导致崩溃
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.wsManager.connect(host: host, port: port)
         }
         
-        // WebSocket回调
         wsManager.onVocalChanged = { [weak self] mode in
             self?.vocalMode = mode
         }
-        wsManager.onEffectChanged = { _ in
-            // 氛围效果由UI层处理
-        }
+        wsManager.onEffectChanged = { _ in }
         wsManager.onPlaybackRestarted = { [weak self] in
             if let song = self?.currentSong {
                 self?.videoURL = nil
@@ -298,7 +341,6 @@ class PlayerManager: ObservableObject {
             do {
                 let queue = try JSONDecoder().decode(KTVQueue.self, from: data)
                 DispatchQueue.main.async {
-                    // 初始化vocalMode
                     if let mode = queue.vocalMode, self?.vocalMode == "accompaniment" {
                         self?.vocalMode = mode
                     }
@@ -337,15 +379,19 @@ struct EffectOverlayView: View {
                     Spacer()
                     VStack(spacing: 10) {
                         Image(systemName: effectIcon)
-                            .font(.system(size: 60))
+                            .font(.system(size: 80))
                             .foregroundColor(.yellow)
+                            .scaleEffect(1.2)
+                            .animation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true), value: show)
                         Text(effect.displayName)
-                            .font(.system(size: 24, weight: .bold))
+                            .font(.system(size: 32, weight: .bold))
                             .foregroundColor(.white)
                     }
-                    .padding(30)
-                    .background(Color.black.opacity(0.6))
-                    .cornerRadius(20)
+                    .padding(40)
+                    .background(
+                        RadialGradient(gradient: Gradient(colors: [Color.yellow.opacity(0.3), Color.clear]), center: .center, startRadius: 0, endRadius: 200)
+                    )
+                    .cornerRadius(30)
                     Spacer()
                 }
                 Spacer()
@@ -356,10 +402,12 @@ struct EffectOverlayView: View {
     
     private var effectIcon: String {
         switch effect {
-        case .applause: return "hands.clap"
+        case .applause: return "hands.clap.fill"
         case .cheer: return "person.3.fill"
-        case .laughter: return "face.smiling"
+        case .laughter: return "face.smiling.fill"
         case .fireworks: return "sparkles"
+        case .whistle: return "wind"
+        case .scream: return "exclamationmark.triangle.fill"
         case .unknown: return "star.fill"
         }
     }
@@ -416,13 +464,23 @@ struct IdleOverlayView: View {
                 
                 Spacer()
                 
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(wsManager.isConnected ? Color.green : Color.red)
-                        .frame(width: 8, height: 8)
-                    Text(wsManager.isConnected ? "遥控已连接" : "遥控未连接")
-                        .font(.system(size: 12))
-                        .foregroundColor(.gray)
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(wsManager.isConnected ? Color.green : Color.red)
+                            .frame(width: 8, height: 8)
+                        Text(wsManager.isConnected ? "遥控已连接" : "遥控未连接")
+                            .font(.system(size: 12))
+                            .foregroundColor(.gray)
+                    }
+                    
+                    // 调试信息：显示最后收到的消息
+                    if !wsManager.lastMessage.isEmpty {
+                        Text("最后消息: \(wsManager.lastMessage.prefix(50))")
+                            .font(.system(size: 10))
+                            .foregroundColor(.gray.opacity(0.6))
+                            .lineLimit(1)
+                    }
                 }
                 .padding(.bottom, 10)
                 
