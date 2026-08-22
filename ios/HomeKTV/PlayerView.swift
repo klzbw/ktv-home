@@ -1406,6 +1406,48 @@ struct PlayerView: View {
                 .zIndex(100)
             }
             
+            // 音量指示器（底部居中，调节音量时显示）
+            if playerManager.showVolumeIndicator {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        VStack(spacing: 10) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "speaker.wave.2.fill")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(.white)
+                                Text("\(playerManager.currentVolume)")
+                                    .font(.system(size: 28, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                            // 音量条
+                            GeometryReader { geometry in
+                                ZStack(alignment: .leading) {
+                                    RoundedRectangle(cornerRadius: 5)
+                                        .fill(Color.white.opacity(0.3))
+                                        .frame(height: 8)
+                                    RoundedRectangle(cornerRadius: 5)
+                                        .fill(Color.white)
+                                        .frame(width: geometry.size.width * CGFloat(playerManager.currentVolume) / 100, height: 8)
+                                }
+                            }
+                            .frame(width: 200, height: 8)
+                        }
+                        .padding(.horizontal, 30)
+                        .padding(.vertical, 20)
+                        .background(
+                            RoundedRectangle(cornerRadius: 15)
+                                .fill(Color.black.opacity(0.7))
+                        )
+                        Spacer()
+                    }
+                    .padding(.bottom, 100)
+                }
+                .transition(.opacity)
+                .zIndex(90)
+            }
+            
             // 原唱/伴唱状态提示（顶部居中，明显显示）
             VStack {
                 HStack {
