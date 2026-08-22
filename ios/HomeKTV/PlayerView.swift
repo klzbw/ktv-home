@@ -182,7 +182,7 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                     self.vocalMode = mode
                     self.onVocalChanged?(mode)
                 }
-            case "effect":
+            case "effect", "effect_play", "play_effect", "atmosphere", "ambiance":
                 // 尝试多种payload格式
                 var effectStr: String?
                 if let e = payload?["effect"] as? String {
@@ -193,7 +193,13 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                     effectStr = e
                 } else if let e = payload?["value"] as? String {
                     effectStr = e
+                } else if let e = payload?["effect_id"] as? String {
+                    effectStr = e
+                } else if let e = payload?["id"] as? String {
+                    effectStr = e
                 }
+                
+                self.addLog("氛围事件类型: \(type), payload: \(String(describing: payload))", type: .websocket)
                 
                 if let effectStr = effectStr {
                     self.effectCount += 1
@@ -208,6 +214,13 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                     }
                 } else {
                     self.addLog("氛围效果payload解析失败: \(String(describing: payload))", type: .warning)
+                    // 即使解析失败，也显示一个通用的氛围效果
+                    self.effectCount += 1
+                    self.currentEffect = .unknown
+                    self.showEffect = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                        self?.showEffect = false
+                    }
                 }
             case "playback_restarted":
                 self.addLog("播放重启")
@@ -428,38 +441,41 @@ struct EffectOverlayView: View {
     let count: Int
     
     var body: some View {
-        ZStack {
-            if show {
-                // 半透明背景
-                Color.black.opacity(0.5)
-                    .ignoresSafeArea()
-                
-                // 氛围效果内容
-                VStack(spacing: 20) {
-                    Image(systemName: effectIcon)
-                        .font(.system(size: 120))
-                        .foregroundColor(.yellow)
-                        .shadow(color: .yellow, radius: 20)
+        GeometryReader { geometry in
+            ZStack {
+                if show {
+                    // 半透明背景
+                    Color.black.opacity(0.6)
+                        .ignoresSafeArea()
                     
-                    Text(effect.displayName)
-                        .font(.system(size: 48, weight: .bold))
-                        .foregroundColor(.white)
-                        .shadow(color: .black, radius: 3)
-                    
-                    Text("第 \(count) 次")
-                        .font(.system(size: 20))
-                        .foregroundColor(.gray)
+                    // 氛围效果内容 - 居中显示
+                    VStack(spacing: 20) {
+                        Spacer()
+                        
+                        Image(systemName: effectIcon)
+                            .font(.system(size: 100))
+                            .foregroundColor(.yellow)
+                            .shadow(color: .yellow, radius: 15)
+                        
+                        Text(effect.displayName)
+                            .font(.system(size: 40, weight: .bold))
+                            .foregroundColor(.white)
+                            .shadow(color: .black, radius: 2)
+                        
+                        Text("第 \(count) 次")
+                            .font(.system(size: 18))
+                            .foregroundColor(.white.opacity(0.8))
+                        
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity)
                 }
-                .padding(50)
-                .background(
-                    RoundedRectangle(cornerRadius: 30)
-                        .fill(Color.black.opacity(0.85))
-                )
-                .transition(.scale.combined(with: .opacity))
             }
+            .frame(width: geometry.size.width, height: geometry.size.height)
         }
         .allowsHitTesting(false)
-        .animation(.spring(response: 0.3, dampingFraction: 0.6), value: show)
+        .animation(.easeInOut(duration: 0.3), value: show)
     }
     
     private var effectIcon: String {
@@ -680,19 +696,20 @@ struct PlayerView: View {
             )
             .ignoresSafeArea()
             
-            // 氛围效果覆盖层（中间层）
+            // 扫码提示页面（中间层）
+            if playerManager.showIdleScreen {
+                IdleOverlayView(deviceManager: deviceManager, wsManager: playerManager.wsManager)
+                    .transition(.opacity)
+            }
+            
+            // 氛围效果覆盖层（最上层，确保在所有内容之上）
             if let effect = playerManager.wsManager.currentEffect {
                 EffectOverlayView(
                     effect: effect,
                     show: playerManager.wsManager.showEffect,
                     count: playerManager.wsManager.effectCount
                 )
-            }
-            
-            // 扫码提示页面（最上层）
-            if playerManager.showIdleScreen {
-                IdleOverlayView(deviceManager: deviceManager, wsManager: playerManager.wsManager)
-                    .transition(.opacity)
+                .zIndex(100)  // 确保在最上层
             }
             
             // 调试按钮（右上角）
