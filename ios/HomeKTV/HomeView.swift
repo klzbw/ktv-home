@@ -8,51 +8,39 @@ struct HomeView: View {
 
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                if deviceManager.connectedDevice != nil {
-                    PlayerView(deviceManager: deviceManager)
-                } else {
-                    deviceListView
-                }
-            }
-            .navigationTitle(deviceManager.connectedDevice != nil ? "" : "家庭KTV")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if deviceManager.connectedDevice != nil {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("断开") {
-                            deviceManager.disconnect()
-                        }
-                    }
-                }
-            }
-            .sheet(isPresented: $showManualInput) {
-                manualInputView
+            if deviceManager.connectedDevice != nil {
+                PlayerView(deviceManager: deviceManager)
+                    .navigationBarItems(leading: Button("断开") {
+                        deviceManager.disconnect()
+                    })
+            } else {
+                deviceListView
+                    .navigationTitle("家庭KTV")
             }
         }
-        .navigationViewStyle(.stack)
+        .sheet(isPresented: $showManualInput) {
+            ManualInputView(showManualInput: $showManualInput, manualHost: $manualHost, manualPort: $manualPort, deviceManager: deviceManager)
+        }
     }
 
     private var deviceListView: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 12) {
             Button(action: {
                 deviceManager.scanForDevices()
             }) {
                 HStack {
                     Image(systemName: deviceManager.isScanning ? "arrow.triangle.2.circlepath" : "dot.radiowaves.left.and.right")
-                        .font(.title2)
                     Text(deviceManager.isScanning ? "正在扫描..." : "扫描局域网设备")
-                        .font(.headline)
                 }
                 .frame(maxWidth: .infinity)
                 .padding()
                 .background(Color.accentColor)
                 .foregroundColor(.white)
                 .cornerRadius(12)
-                .padding(.horizontal)
-                .padding(.top)
             }
             .disabled(deviceManager.isScanning)
+            .padding(.horizontal)
+            .padding(.top)
 
             Button(action: {
                 showManualInput = true
@@ -66,41 +54,46 @@ struct HomeView: View {
                 .background(Color.gray.opacity(0.2))
                 .foregroundColor(.primary)
                 .cornerRadius(12)
-                .padding(.horizontal)
-                .padding(.vertical, 8)
             }
+            .padding(.horizontal)
 
             List {
                 if deviceManager.devices.isEmpty {
-                    Section(header: Text("暂无设备")) {
-                        Text("点击上方按钮扫描局域网中的KTV设备，或手动输入地址")
-                            .foregroundColor(.secondary)
-                            .padding(.vertical)
-                    }
+                    Text("暂无设备，点击上方按钮扫描或手动输入")
+                        .foregroundColor(.secondary)
                 } else {
-                    Section(header: Text("可用设备")) {
-                        ForEach(deviceManager.devices) { device in
-                            DeviceRow(device: device) {
-                                deviceManager.connectToDevice(device)
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                if device.isHistory {
-                                    Button(role: .destructive) {
-                                        deviceManager.removeDevice(device)
-                                    } label: {
-                                        Label("删除", systemImage: "trash")
-                                    }
+                    ForEach(deviceManager.devices) { device in
+                        Button(action: {
+                            deviceManager.connectToDevice(device)
+                        }) {
+                            HStack {
+                                Image(systemName: "tv")
+                                    .foregroundColor(.accentColor)
+                                VStack(alignment: .leading) {
+                                    Text(device.name)
+                                    Text("\(device.host):\(device.port)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
                                 }
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .foregroundColor(.secondary)
                             }
                         }
                     }
                 }
             }
-            .listStyle(.insetGrouped)
         }
     }
+}
 
-    private var manualInputView: some View {
+struct ManualInputView: View {
+    @Binding var showManualInput: Bool
+    @Binding var manualHost: String
+    @Binding var manualPort: String
+    @ObservedObject var deviceManager: DeviceManager
+
+    var body: some View {
         NavigationView {
             Form {
                 Section(header: Text("服务端地址")) {
@@ -134,52 +127,9 @@ struct HomeView: View {
                 }
             }
             .navigationTitle("手动输入")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
-                        showManualInput = false
-                    }
-                }
-            }
+            .navigationBarItems(trailing: Button("取消") {
+                showManualInput = false
+            })
         }
-    }
-}
-
-struct DeviceRow: View {
-    let device: KTVDevice
-    let onConnect: () -> Void
-
-    var body: some View {
-        Button(action: onConnect) {
-            HStack(spacing: 12) {
-                Image(systemName: "tv")
-                    .font(.title2)
-                    .foregroundColor(.accentColor)
-                    .frame(width: 40, height: 40)
-                    .background(Color.accentColor.opacity(0.1))
-                    .cornerRadius(8)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(device.name)
-                        .font(.headline)
-                    Text("\(device.host):\(device.port)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-
-                Spacer()
-
-                if device.isHistory {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .foregroundColor(.secondary)
-                }
-
-                Image(systemName: "chevron.right")
-                    .foregroundColor(.secondary)
-            }
-            .padding(.vertical, 4)
-        }
-        .buttonStyle(.plain)
     }
 }

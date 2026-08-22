@@ -1,7 +1,6 @@
 import Foundation
-import Network
 
-struct KTVDevice: Identifiable, Hashable, Codable {
+struct KTVDevice: Identifiable, Codable {
     let id: UUID
     let name: String
     let host: String
@@ -41,7 +40,7 @@ class DeviceManager: ObservableObject {
     }
 
     func addHistoryDevice(name: String, host: String, port: Int) {
-        var device = KTVDevice(name: name, host: host, port: port, isHistory: true)
+        let device = KTVDevice(name: name, host: host, port: port, isHistory: true)
         if !devices.contains(where: { $0.host == host && $0.port == port }) {
             devices.insert(device, at: 0)
             if devices.count > 10 {
