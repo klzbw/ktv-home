@@ -1,5 +1,7 @@
 import SwiftUI
+#if canImport(WebKit)
 import WebKit
+#endif
 
 struct ContentView: View {
     @StateObject private var config = ServerConfig.shared
@@ -8,8 +10,12 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             if let url = config.serverURL {
+                #if canImport(WebKit)
                 WebView(url: url)
                     .edgesIgnoringSafeArea(.all)
+                #else
+                Text("WebKit not available")
+                #endif
             } else {
                 SetupView(showSettings: $showSettings)
             }
@@ -23,6 +29,7 @@ struct ContentView: View {
     }
 }
 
+#if canImport(WebKit)
 struct WebView: UIViewRepresentable {
     let url: URL
 
@@ -58,6 +65,7 @@ struct WebView: UIViewRepresentable {
         }
     }
 }
+#endif
 
 struct SetupView: View {
     @Binding var showSettings: Bool
