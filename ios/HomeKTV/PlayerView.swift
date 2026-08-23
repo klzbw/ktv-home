@@ -298,6 +298,15 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
                 addLog("播放状态: \(state)")
                 onPlaybackControl?(state)
             }
+            // 提取当前播放歌曲信息（用于切歌同步）
+            if let playing = payload?["playing"] as? [String: Any],
+               let songDict = playing["song"] as? [String: Any],
+               let songId = songDict["id"] as? Int,
+               let songTitle = songDict["title"] as? String {
+                let songArtist = songDict["artist"] as? String ?? ""
+                addLog("状态同步-当前歌曲: \(songTitle) - \(songArtist) (ID: \(songId))", type: .info)
+                onStateSync?(["songId": songId, "songTitle": songTitle, "songArtist": songArtist])
+            }
             // 从多个位置提取音轨模式
             var syncMode: String? = nil
             if let m = payload?["vocalMode"] as? String {
@@ -531,30 +540,30 @@ struct VLCVideoView: UIViewRepresentable {
         uiView.setNeedsLayout()
         uiView.layoutIfNeeded()
         
-        if let songId = songId, context.coordinator.lastSongId != songId {
-            onLog?("切换歌曲ID: \(songId), URL: \(url?.lastPathComponent ?? "nil")", .info)
-            context.coordinator.lastSongId = songId
-            context.coordinator.lastURL = url
+        // 关键：只要URL变化，就切换到新视频（不依赖songId，避免更新顺序问题）
+        if let newURL = url, context.coordinator.lastURL != newURL {
+            onLog?("🔄 URL变化，切换视频: \(newURL.lastPathComponent)", .info)
+            context.coordinator.lastURL = newURL
+            if let songId = songId {
+                context.coordinator.lastSongId = songId
+            }
             
-            // 立即停止旧播放并开始新播放
+            // 停止旧播放
             player.stop()
-            onLog?("停止旧播放", .info)
+            onLog?("⏹️ 停止旧播放", .info)
             
-            // 立即开始新播放，不延迟
-            if let url = url {
-                let media = VLCMedia(url: url)
+            // 延迟0.3秒后开始新播放，确保VLC完全停止
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                let media = VLCMedia(url: newURL)
                 player.media = media
                 player.play()
-                onLog?("开始新播放: \(url.lastPathComponent)", .info)
+                onLog?("▶️ 开始新播放: \(newURL.lastPathComponent)", .info)
             }
-        } else if let url = url, context.coordinator.lastURL != url {
-            // URL变化但歌曲ID没变，也需要更新
-            onLog?("URL变化: \(url.lastPathComponent)", .info)
-            context.coordinator.lastURL = url
+        } else if url == nil && context.coordinator.lastURL != nil {
+            // URL变为nil，停止播放
+            onLog?("⏹️ URL变为nil，停止播放", .info)
+            context.coordinator.lastURL = nil
             player.stop()
-            let media = VLCMedia(url: url)
-            player.media = media
-            player.play()
         }
     }
     
@@ -856,8 +865,12 @@ class PlayerManager: ObservableObject {
                     if let playing = queue.playing {
                         if self?.currentSong?.id != playing.song.id {
                             self?.addLog("检测到新歌: \(playing.song.title) - \(playing.song.artist) (ID: \(playing.song.id))", type: .info)
+                            // 先更新videoURL（关键：确保VLCVideoView能检测到URL变化）
+                            let newURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(playing.song.id)")
+                            self?.videoURL = newURL
+                            self?.addLog("📺 更新videoURL: \(newURL?.lastPathComponent ?? "nil")", type: .info)
+                            // 再更新currentSong
                             self?.currentSong = playing.song
-                            self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(playing.song.id)")
                         }
                         self?.showIdleScreen = false
                     } else {
