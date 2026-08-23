@@ -1630,55 +1630,9 @@ struct PlayerView: View {
                 .zIndex(90)
             }
             
-            // 原唱/伴唱状态提示（顶部居中，明显显示）
-            VStack {
-                HStack {
-                    Spacer()
-                    Text(playerManager.vocalMode == "original" ? "🎤 原唱" : "🎵 伴唱")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background(
-                            Capsule()
-                                .fill(playerManager.vocalMode == "original" ? Color.orange.opacity(0.8) : Color.blue.opacity(0.8))
-                        )
-                        .padding(.top, 50)
-                    Spacer()
-                }
-                Spacer()
-            }
-            .allowsHitTesting(false)
-            .zIndex(50)
-            .animation(.easeInOut(duration: 0.3), value: playerManager.vocalMode)
+            // 原唱/伴唱状态提示（发布版已关闭）
             
-            // 调试按钮（右上角）
-            VStack {
-                HStack {
-                    Spacer()
-                    Button(action: { showDebug.toggle() }) {
-                        Image(systemName: "ladybug.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(.white)
-                            .padding(10)
-                            .background(Color.black.opacity(0.5))
-                            .clipShape(Circle())
-                    }
-                    .padding()
-                }
-                Spacer()
-            }
-            
-            // 调试面板
-            if showDebug {
-                DebugPanelView(
-                    wsManager: playerManager.wsManager,
-                    playerManager: playerManager,
-                    showDebug: $showDebug
-                )
-                .transition(.move(edge: .top))
-                .zIndex(200)
-            }
+            // 调试按钮和面板（发布版已关闭）
         }
         .onAppear {
             if let device = deviceManager.connectedDevice {
