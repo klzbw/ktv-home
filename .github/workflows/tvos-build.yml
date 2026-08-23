@@ -40,32 +40,61 @@ jobs:
           -sdk appletvos \
           -archivePath $PWD/build/HomeKTVTV.xcarchive \
           archive \
-          CODE_SIGN_IDENTITY="" \
+          CODE_SIGN_IDENTITY="-" \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGNING_ALLOWED=NO
     
-    - name: Verify Assets.car content
+    - name: Create exportOptions.plist
       working-directory: tvos
       run: |
-        APP="build/HomeKTVTV.xcarchive/Products/Applications/HomeKTVTV.app"
-        echo "=== .app内容 ==="
-        ls -la "$APP/"
-        echo ""
-        echo "=== Assets.car信息 ==="
-        xcrun --sdk appletvos assetutil --info "$APP/Assets.car" 2>/dev/null | head -100
-        echo ""
-        echo "=== ProductIcon.png ==="
-        ls -la build/HomeKTVTV.xcarchive/Products/Applications/HomeKTVTV.app/ProductIcon.png 2>/dev/null || echo "No ProductIcon.png"
-        ls -la build/HomeKTVTV.xcarchive/BuildProductsPath/ProductIcon.png 2>/dev/null || echo "No BuildProductsPath/ProductIcon.png"
+        cat > build/exportOptions.plist << 'EOF'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>method</key>
+            <string>development</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+        </dict>
+        </plist>
+        EOF
     
-    - name: Package IPA
+    - name: Export IPA
+      working-directory: tvos
+      run: |
+        xcodebuild -exportArchive \
+          -archivePath $PWD/build/HomeKTVTV.xcarchive \
+          -exportPath $PWD/build/export \
+          -exportOptionsPlist $PWD/build/exportOptions.plist \
+          CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO || true
+        echo "=== export目录 ==="
+        ls -la build/export/ 2>/dev/null || echo "export failed, using manual package"
+    
+    - name: Package IPA (fallback)
+      if: failure()
       working-directory: tvos
       run: |
         mkdir -p build/Payload
         cp -R build/HomeKTVTV.xcarchive/Products/Applications/HomeKTVTV.app build/Payload/
         cd build
         zip -r HomeKTV-tvOS.ipa Payload
-        ls -la HomeKTV-tvOS.ipa
+    
+    - name: Find IPA
+      working-directory: tvos
+      run: |
+        if [ -f build/export/HomeKTVTV.ipa ]; then
+          cp build/export/HomeKTVTV.ipa build/HomeKTV-tvOS.ipa
+        elif [ -f build/HomeKTV-tvOS.ipa ]; then
+          echo "Using fallback IPA"
+        else
+          mkdir -p build/Payload
+          cp -R build/HomeKTVTV.xcarchive/Products/Applications/HomeKTVTV.app build/Payload/
+          cd build && zip -r HomeKTV-tvOS.ipa Payload
+        fi
+        ls -la build/HomeKTV-tvOS.ipa
     
     - name: Upload IPA
       uses: actions/upload-artifact@v4
