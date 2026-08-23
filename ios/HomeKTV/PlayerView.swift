@@ -786,6 +786,25 @@ class PlayerManager: ObservableObject {
             self?.wsManager.connect(host: host, port: port)
         }
         
+        wsManager.onStateSync = { [weak self] state in
+            guard let self = self else { return }
+            if let songId = state["songId"] as? Int,
+               let songTitle = state["songTitle"] as? String {
+                // 如果歌曲ID变化，说明切歌了
+                if self.currentSong?.id != songId {
+                    let songArtist = state["songArtist"] as? String ?? ""
+                    self.addLog("🔄 WebSocket切歌同步: \(songTitle) - \(songArtist) (ID: \(songId))", type: .info)
+                    // 先更新videoURL（关键：确保VLCVideoView能检测到URL变化）
+                    let newVideoURL = URL(string: "http://\(self.host):\(self.port)/api/stream/\(songId)")
+                    self.videoURL = newVideoURL
+                    self.addLog("📺 更新videoURL: \(newVideoURL?.lastPathComponent ?? "nil")", type: .info)
+                    // 再更新currentSong
+                    self.currentSong = KTVSong(id: songId, title: songTitle, artist: songArtist)
+                    self.showIdleScreen = false
+                }
+            }
+        }
+        
         wsManager.onVocalChanged = { [weak self] mode in
             print("onVocalChanged回调被调用: \(mode)")
             self?.addLog("📞 onVocalChanged回调: \(mode)", type: .info)
