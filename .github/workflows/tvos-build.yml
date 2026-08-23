@@ -44,57 +44,18 @@ jobs:
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGNING_ALLOWED=NO
     
-    - name: Create exportOptions.plist
+    - name: Package IPA
       working-directory: tvos
       run: |
-        cat > build/exportOptions.plist << 'EOF'
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>method</key>
-            <string>development</string>
-            <key>signingStyle</key>
-            <string>automatic</string>
-            <key>stripSwiftSymbols</key>
-            <true/>
-        </dict>
-        </plist>
-        EOF
-    
-    - name: Export IPA
-      working-directory: tvos
-      run: |
-        xcodebuild -exportArchive \
-          -archivePath $PWD/build/HomeKTVTV.xcarchive \
-          -exportPath $PWD/build/export \
-          -exportOptionsPlist $PWD/build/exportOptions.plist \
-          CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO || true
-        echo "=== export目录 ==="
-        ls -la build/export/ 2>/dev/null || echo "export failed, using manual package"
-    
-    - name: Package IPA (fallback)
-      if: failure()
-      working-directory: tvos
-      run: |
-        mkdir -p build/Payload
-        cp -R build/HomeKTVTV.xcarchive/Products/Applications/HomeKTVTV.app build/Payload/
         cd build
+        rm -rf Payload
+        mkdir -p Payload
+        cp -R HomeKTVTV.xcarchive/Products/Applications/HomeKTVTV.app Payload/
+        rm -f HomeKTV-tvOS.ipa
         zip -r HomeKTV-tvOS.ipa Payload
-    
-    - name: Find IPA
-      working-directory: tvos
-      run: |
-        if [ -f build/export/HomeKTVTV.ipa ]; then
-          cp build/export/HomeKTVTV.ipa build/HomeKTV-tvOS.ipa
-        elif [ -f build/HomeKTV-tvOS.ipa ]; then
-          echo "Using fallback IPA"
-        else
-          mkdir -p build/Payload
-          cp -R build/HomeKTVTV.xcarchive/Products/Applications/HomeKTVTV.app build/Payload/
-          cd build && zip -r HomeKTV-tvOS.ipa Payload
-        fi
-        ls -la build/HomeKTV-tvOS.ipa
+        ls -la HomeKTV-tvOS.ipa
+        echo "=== .app内容 ==="
+        ls -la Payload/HomeKTVTV.app/
     
     - name: Upload IPA
       uses: actions/upload-artifact@v4
