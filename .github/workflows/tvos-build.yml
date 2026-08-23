@@ -27,6 +27,24 @@ jobs:
       working-directory: tvos
       run: xcodegen generate
     
+    - name: Debug - Check project structure
+      working-directory: tvos
+      run: |
+        echo "=== tvOS目录结构 ==="
+        find . -name "*.xcassets" -type d
+        echo ""
+        echo "=== AppIcon.appiconset内容 ==="
+        ls -la HomeKTVTV/Assets.xcassets/AppIcon.appiconset/
+        echo ""
+        echo "=== Contents.json ==="
+        cat HomeKTVTV/Assets.xcassets/AppIcon.appiconset/Contents.json
+        echo ""
+        echo "=== Xcode项目中的资源引用 ==="
+        grep -r "Assets.xcassets" HomeKTVTV.xcodeproj/project.pbxproj | head -20
+        echo ""
+        echo "=== AppIcon构建设置 ==="
+        grep -r "ASSETCATALOG_COMPILER_APPICON_NAME" HomeKTVTV.xcodeproj/project.pbxproj | head -10
+    
     - name: Install dependencies
       working-directory: tvos
       run: pod install --repo-update
@@ -43,6 +61,21 @@ jobs:
           CODE_SIGN_IDENTITY="" \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGNING_ALLOWED=NO
+    
+    - name: Debug - Check app bundle for icons
+      working-directory: tvos
+      run: |
+        echo "=== .app目录内容 ==="
+        ls -la build/HomeKTVTV.xcarchive/Products/Applications/HomeKTVTV.app/
+        echo ""
+        echo "=== Assets.car是否存在 ==="
+        ls -la build/HomeKTVTV.xcarchive/Products/Applications/HomeKTVTV.app/Assets.car 2>/dev/null || echo "Assets.car NOT FOUND"
+        echo ""
+        echo "=== 检查图标文件 ==="
+        find build/HomeKTVTV.xcarchive/Products/Applications/HomeKTVTV.app/ -name "*icon*" -o -name "*Icon*" -o -name "*AppIcon*" 2>/dev/null
+        echo ""
+        echo "=== xcodebuild图标相关日志 ==="
+        xcodebuild -workspace HomeKTVTV.xcworkspace -scheme HomeKTVTV -configuration Release -sdk appletvos -showBuildSettings 2>/dev/null | grep -i "appicon\|asset" | head -20
     
     - name: Package IPA
       working-directory: tvos
