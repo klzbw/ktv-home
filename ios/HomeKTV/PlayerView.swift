@@ -1518,6 +1518,77 @@ struct IdleOverlayView: View {
     }
 }
 
+// MARK: - 播放时迷你二维码（右下角，参考安卓端 imgMiniQr）
+/// 视频播放期间在右下角显示的小型扫码点歌二维码，
+/// 对应安卓端 activity_main.xml 中的 imgMiniQr（104dp，白底+扫码点歌标签）。
+struct MiniQrOverlayView: View {
+    @ObservedObject var deviceManager: DeviceManager
+    @State private var qrImage: UIImage?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            HStack(spacing: 0) {
+                Spacer()
+                VStack(spacing: 4) {
+                    if let qrImage = qrImage {
+                        Image(uiImage: qrImage)
+                            .interpolation(.none)
+                            .resizable()
+                            .frame(width: 80, height: 80)
+                            .padding(4)
+                            .background(Color.white)
+                            .cornerRadius(6)
+                    } else {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.white)
+                            .frame(width: 88, height: 88)
+                            .overlay(ProgressView().scaleEffect(0.7))
+                    }
+
+                    Text("扫码点歌")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.white)
+                        .shadow(color: Color.black.opacity(0.85), radius: 3, x: 1, y: 1)
+                }
+                .padding(.trailing, 24)
+                // 底部留出进度条/信息条空间（安卓端 marginBottom=78dp）
+                .padding(.bottom, 80)
+            }
+        }
+        .allowsHitTesting(false)
+        .onAppear { generateQRCode() }
+        .onChange(of: deviceManager.connectedDevice?.host) { _ in generateQRCode() }
+    }
+
+    /// 使用 CoreImage 生成点歌地址二维码，与 IdleOverlayView 保持一致的生成逻辑。
+    func generateQRCode() {
+        guard let device = deviceManager.connectedDevice else { return }
+        let urlString = "http://\(device.host):\(device.port)/m"
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let data = urlString.data(using: .ascii)
+            guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return }
+            filter.setValue(data, forKey: "inputMessage")
+            // 安卓端服务端使用 ErrorCorrectionLevel.M，此处保持一致
+            filter.setValue("M", forKey: "inputCorrectionLevel")
+
+            guard let outputImage = filter.outputImage else { return }
+            let scale = 80 / outputImage.extent.width
+            let transformedImage = outputImage.transformed(
+                by: CGAffineTransform(scaleX: scale, y: scale)
+            )
+
+            let context = CIContext()
+            if let cgImage = context.createCGImage(transformedImage, from: transformedImage.extent) {
+                DispatchQueue.main.async {
+                    self.qrImage = UIImage(cgImage: cgImage)
+                }
+            }
+        }
+    }
+}
+
 // MARK: - 主播放视图
 struct PlayerView: View {
     @ObservedObject var deviceManager: DeviceManager
@@ -1577,7 +1648,14 @@ struct PlayerView: View {
                 IdleOverlayView(deviceManager: deviceManager, wsManager: playerManager.wsManager)
                     .transition(.opacity)
             }
-            
+
+            // 播放时迷你二维码（右下角，参考安卓端 imgMiniQr）
+            if !playerManager.showIdleScreen {
+                MiniQrOverlayView(deviceManager: deviceManager)
+                    .zIndex(40)
+                    .transition(.opacity)
+            }
+
             // 氛围效果覆盖层（最上层）
             if let effect = playerManager.wsManager.currentEffect {
                 EffectOverlayView(
@@ -1664,3 +1742,4 @@ struct PlayerView: View {
         }
     }
 }
+
