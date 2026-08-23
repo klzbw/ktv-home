@@ -612,6 +612,8 @@ class PlayerManager: ObservableObject {
     private var host: String = ""
     private var port: Int = 8980
     var vlcPlayer: VLCMediaPlayer?  // VLC播放器引用，直接控制播放/暂停/音轨（strong，确保不被释放）
+    private var songFileIdCache: [Int: Int] = [:]  // songId -> fileId缓存
+    private var progressTimer: Timer?  // 进度上报定时器
     
     private func addLog(_ message: String, type: DebugLogEntry.LogType = .info) {
         let formatter = DateFormatter()
@@ -807,17 +809,16 @@ class PlayerManager: ObservableObject {
             guard let self = self else { return }
             if let songId = state["songId"] as? Int,
                let songTitle = state["songTitle"] as? String {
-                // 如果歌曲ID变化，说明切歌了
                 if self.currentSong?.id != songId {
                     let songArtist = state["songArtist"] as? String ?? ""
-                    self.addLog("🔄 WebSocket切歌同步: \(songTitle) - \(songArtist) (ID: \(songId))", type: .info)
-                    // 先更新videoURL（关键：确保VLCVideoView能检测到URL变化）
-                    let newVideoURL = URL(string: "http://\(self.host):\(self.port)/api/stream/\(songId)")
-                    self.videoURL = newVideoURL
-                    self.addLog("📺 更新videoURL: \(newVideoURL?.lastPathComponent ?? "nil")", type: .info)
-                    // 再更新currentSong
+                    self.addLog("🔄 切歌: \(songTitle) (songId=\(songId))", type: .info)
                     self.currentSong = KTVSong(id: songId, title: songTitle, artist: songArtist)
                     self.showIdleScreen = false
+                    // 先拉取file_id再播放（参考安卓端）
+                    self.fetchSongDetail(songId: songId) { fileId in
+                        self.videoURL = URL(string: "http://\(self.host):\(self.port)/api/stream/\(fileId)")
+                        self.addLog("📺 播放: fileId=\(fileId)", type: .info)
+                    }
                 }
             }
         }
@@ -859,11 +860,12 @@ class PlayerManager: ObservableObject {
         }
         
         wsManager.onPlaybackRestarted = { [weak self] in
-            if let song = self?.currentSong {
-                self?.addLog("播放重启: \(song.title)", type: .info)
-                self?.videoURL = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(song.id)")
+            guard let self = self, let song = self.currentSong else { return }
+            self.addLog("播放重启: \(song.title)", type: .info)
+            self.fetchSongDetail(songId: song.id) { fileId in
+                self.videoURL = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.videoURL = URL(string: "http://\(self.host):\(self.port)/api/stream/\(fileId)")
                 }
             }
         }
@@ -885,6 +887,41 @@ class PlayerManager: ObservableObject {
         wsManager.disconnect()
     }
     
+    /// 拉取歌曲详情获取file_id（参考安卓端）
+    func fetchSongDetail(songId: Int, completion: @escaping (Int) -> Void) {
+        if let cached = songFileIdCache[songId] {
+            completion(cached)
+            return
+        }
+        guard let url = URL(string: "http://\(host):\(port)/api/songs/\(songId)") else {
+            completion(songId)
+            return
+        }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            guard let self = self, let data = data, error == nil else {
+                DispatchQueue.main.async { completion(songId) }
+                return
+            }
+            do {
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let files = json["files"] as? [[String: Any]], !files.isEmpty {
+                    var bestFile: [String: Any]?
+                    var bestPriority = Int.min
+                    for f in files {
+                        let p = f["priority"] as? Int ?? 0
+                        if p > bestPriority { bestPriority = p; bestFile = f }
+                    }
+                    if let fid = bestFile?["id"] as? Int {
+                        self.songFileIdCache[songId] = fid
+                        DispatchQueue.main.async { completion(fid) }
+                        return
+                    }
+                }
+            } catch {}
+            DispatchQueue.main.async { completion(songId) }
+        }.resume()
+    }
+    
     func fetchQueue() {
         guard let url = URL(string: "http://\(host):\(port)/api/queue") else { return }
         
@@ -900,13 +937,14 @@ class PlayerManager: ObservableObject {
                     
                     if let playing = queue.playing {
                         if self?.currentSong?.id != playing.song.id {
-                            self?.addLog("检测到新歌: \(playing.song.title) - \(playing.song.artist) (ID: \(playing.song.id))", type: .info)
-                            // 先更新videoURL（关键：确保VLCVideoView能检测到URL变化）
-                            let newURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(playing.song.id)")
-                            self?.videoURL = newURL
-                            self?.addLog("📺 更新videoURL: \(newURL?.lastPathComponent ?? "nil")", type: .info)
-                            // 再更新currentSong
+                            self?.addLog("🔄 队列新歌: \(playing.song.title) (songId=\(playing.song.id))", type: .info)
                             self?.currentSong = playing.song
+                            self?.showIdleScreen = false
+                            // 先拉取file_id再播放
+                            self?.fetchSongDetail(songId: playing.song.id) { fileId in
+                                self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(fileId)")
+                                self?.addLog("📺 队列播放: fileId=\(fileId)", type: .info)
+                            }
                         }
                         self?.showIdleScreen = false
                     } else {
