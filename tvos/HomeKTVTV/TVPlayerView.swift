@@ -99,7 +99,6 @@ struct MiniQrOverlayView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Spacer()
             HStack(spacing: 0) {
                 Spacer()
                 VStack(spacing: 4) {
@@ -124,9 +123,10 @@ struct MiniQrOverlayView: View {
                         .shadow(color: Color.black.opacity(0.85), radius: 3, x: 1, y: 1)
                 }
                 .padding(.trailing, 32)
-                // 底部留出空间（tvOS 屏幕较大，适当增加边距）
-                .padding(.bottom, 100)
+                // 顶部留出安全区空间
+                .padding(.top, 100)
             }
+            Spacer()
         }
         .allowsHitTesting(false)
         .onAppear { generateQRCode() }

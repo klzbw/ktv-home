@@ -1527,7 +1527,6 @@ struct MiniQrOverlayView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Spacer()
             HStack(spacing: 0) {
                 Spacer()
                 VStack(spacing: 4) {
@@ -1552,9 +1551,10 @@ struct MiniQrOverlayView: View {
                         .shadow(color: Color.black.opacity(0.85), radius: 3, x: 1, y: 1)
                 }
                 .padding(.trailing, 24)
-                // 底部留出进度条/信息条空间（安卓端 marginBottom=78dp）
-                .padding(.bottom, 80)
+                // 顶部留出安全区空间
+                .padding(.top, 80)
             }
+            Spacer()
         }
         .allowsHitTesting(false)
         .onAppear { generateQRCode() }
