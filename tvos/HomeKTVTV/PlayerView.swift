@@ -1,0 +1,1272 @@
+import SwiftUI
+import MobileVLCKit
+import AVFoundation
+import Combine
+
+// MARK: - 数据模型
+struct KTVSong: Codable {
+    let id: Int
+    let title: String
+    let artist: String
+}
+
+struct KTVQueueItem: Codable {
+    let queueId: Int
+    let song: KTVSong
+}
+
+struct KTVQueue: Codable {
+    let playing: KTVQueueItem?
+    let list: [KTVQueueItem]?
+    let vocalMode: String?
+}
+
+// MARK: - 氛围效果类型（四种：鼓掌、欢呼、倒彩、干杯）
+enum KTVEffect: String {
+    case applause = "applause"
+    case clap = "clap"
+    case cheer = "cheer"
+    case boo = "boo"
+    case hiss = "hiss"
+    case cheers = "cheers"
+    case toast = "toast"
+    case unknown = "unknown"
+    
+    var displayName: String {
+        switch self {
+        case .applause, .clap: return "鼓掌"
+        case .cheer: return "欢呼"
+        case .boo, .hiss: return "倒彩"
+        case .cheers, .toast: return "干杯"
+        case .unknown: return "氛围"
+        }
+    }
+    
+    var iconName: String {
+        switch self {
+        case .applause, .clap: return "hands.clap"
+        case .cheer: return "person.3.fill"
+        case .boo, .hiss: return "hand.thumbsdown"
+        case .cheers, .toast: return "wineglass.fill"
+        case .unknown: return "star.fill"
+        }
+    }
+    
+    var color: Color {
+        switch self {
+        case .applause, .clap: return .yellow
+        case .cheer: return .green
+        case .boo, .hiss: return .red
+        case .cheers, .toast: return .orange
+        case .unknown: return .white
+        }
+    }
+    
+    // 系统音效ID
+    var systemSoundID: SystemSoundID {
+        switch self {
+        case .applause, .clap: return 1104  // 短信收到
+        case .cheer: return 1306  // 收到邮件
+        case .boo, .hiss: return 1102  // 短信发送
+        case .cheers, .toast: return 1304  // 发送邮件
+        case .unknown: return 1100
+        }
+    }
+}
+
+// MARK: - 音效播放器（使用系统音效，自然不突兀）
+class EffectSoundPlayer {
+    static let shared = EffectSoundPlayer()
+    
+    func playEffect(_ effect: KTVEffect) {
+        // 使用系统音效，自然不突兀
+        AudioServicesPlaySystemSound(effect.systemSoundID)
+        
+        // 对于某些效果，播放两次增强效果
+        switch effect {
+        case .applause, .clap:
+            // 鼓掌：连续播放两次
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                AudioServicesPlaySystemSound(1104)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                AudioServicesPlaySystemSound(1104)
+            }
+        case .cheer:
+            // 欢呼：连续播放两次
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                AudioServicesPlaySystemSound(1306)
+            }
+        case .boo, .hiss:
+            // 倒彩：使用较低的音效
+            AudioServicesPlaySystemSound(1102)
+        case .cheers, .toast:
+            // 干杯：使用清脆的音效
+            AudioServicesPlaySystemSound(1304)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                AudioServicesPlaySystemSound(1304)
+            }
+        case .unknown:
+            break
+        }
+    }
+}
+
+// MARK: - 调试日志条目
+struct DebugLogEntry: Identifiable {
+    let id = UUID()
+    let time: String
+    let message: String
+    let type: LogType
+    
+    enum LogType {
+        case info, warning, error, websocket
+    }
+}
+
+// MARK: - WebSocket管理器
+class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate {
+    @Published var isConnected = false
+    @Published var vocalMode: String = "accompaniment"
+    @Published var currentEffect: KTVEffect?
+    @Published var showEffect = false
+    @Published var debugLogs: [DebugLogEntry] = []
+    @Published var lastMessage: String = ""
+    @Published var effectCount = 0
+    
+    private var webSocket: URLSessionWebSocketTask?
+    private var session: URLSession?
+    private var pingTimer: Timer?
+    private var host: String = ""
+    private var port: Int = 8980
+    
+    var onVocalChanged: ((String) -> Void)?
+    var onEffectChanged: ((KTVEffect) -> Void)?
+    var onPlaybackRestarted: (() -> Void)?
+    var onPlaybackControl: ((String) -> Void)?
+    var onStateSync: (([String: Any]) -> Void)?
+    var onVolumeChanged: ((Int, Bool) -> Void)?  // (volume, muted)
+    
+    private func addLog(_ message: String, type: DebugLogEntry.LogType = .info) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        let time = formatter.string(from: Date())
+        let entry = DebugLogEntry(time: time, message: message, type: type)
+        DispatchQueue.main.async {
+            self.debugLogs.insert(entry, at: 0)
+            if self.debugLogs.count > 50 {
+                self.debugLogs.removeLast()
+            }
+        }
+    }
+    
+    func connect(host: String, port: Int) {
+        self.host = host
+        self.port = port
+        addLog("连接WebSocket: ws://\(host):\(port)/ws")
+        
+        guard let url = URL(string: "ws://\(host):\(port)/ws") else {
+            addLog("URL无效", type: .error)
+            return
+        }
+        
+        let config = URLSessionConfiguration.default
+        session = URLSession(configuration: config, delegate: self, delegateQueue: OperationQueue.main)
+        webSocket = session?.webSocketTask(with: url)
+        webSocket?.resume()
+        
+        receiveMessage()
+        startPing()
+    }
+    
+    func disconnect() {
+        addLog("断开WebSocket")
+        stopPing()
+        webSocket?.cancel()
+        webSocket = nil
+        session?.invalidateAndCancel()
+        session = nil
+        isConnected = false
+    }
+    
+    private func receiveMessage() {
+        webSocket?.receive { [weak self] result in
+            guard let self = self else { return }
+            
+            switch result {
+            case .success(let message):
+                switch message {
+                case .string(let text):
+                    DispatchQueue.main.async {
+                        self.lastMessage = text
+                        self.addLog("收到: \(text)", type: .websocket)
+                        self.handleMessage(text)
+                    }
+                case .data(let data):
+                    if let text = String(data: data, encoding: .utf8) {
+                        DispatchQueue.main.async {
+                            self.lastMessage = text
+                            self.addLog("收到(data): \(text)", type: .websocket)
+                            self.handleMessage(text)
+                        }
+                    }
+                @unknown default:
+                    break
+                }
+            case .failure(let error):
+                DispatchQueue.main.async {
+                    self.addLog("WebSocket错误: \(error.localizedDescription)", type: .error)
+                    self.isConnected = false
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                    self?.connect(host: self?.host ?? "", port: self?.port ?? 8980)
+                }
+                return
+            }
+            self.receiveMessage()
+        }
+    }
+    
+    private func handleMessage(_ text: String) {
+        guard let data = text.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = json["type"] as? String else {
+            addLog("消息解析失败", type: .error)
+            return
+        }
+        
+        let payload = json["payload"] as? [String: Any]
+        
+        switch type {
+        case "pong":
+            isConnected = true
+        case "vocal_changed":
+            // 打印完整payload用于调试
+            if let payloadData = try? JSONSerialization.data(withJSONObject: payload ?? [:], options: .prettyPrinted),
+               let payloadStr = String(data: payloadData, encoding: .utf8) {
+                addLog("vocal_changed完整payload: \(payloadStr)", type: .websocket)
+                print("vocal_changed完整payload: \(payloadStr)")
+            }
+            
+            // 从多个位置尝试提取音轨模式
+            var mode: String? = nil
+            
+            // 位置1：payload.mode
+            if let m = payload?["mode"] as? String {
+                mode = m
+                addLog("从payload.mode获取: \(m)", type: .info)
+            }
+            // 位置2：payload.vocalMode
+            else if let m = payload?["vocalMode"] as? String {
+                mode = m
+                addLog("从payload.vocalMode获取: \(m)", type: .info)
+            }
+            // 位置3：payload.playing.vocalMode
+            else if let playing = payload?["playing"] as? [String: Any],
+                    let m = playing["vocalMode"] as? String {
+                mode = m
+                addLog("从playing.vocalMode获取: \(m)", type: .info)
+            }
+            // 位置4：payload.playing.song.vocalMode
+            else if let playing = payload?["playing"] as? [String: Any],
+                    let song = playing["song"] as? [String: Any],
+                    let m = song["vocalMode"] as? String {
+                mode = m
+                addLog("从playing.song.vocalMode获取: \(m)", type: .info)
+            }
+            
+            if let mode = mode {
+                addLog("原唱/伴唱切换: \(mode)", type: .info)
+                vocalMode = mode
+                onVocalChanged?(mode)
+            } else {
+                addLog("⚠️ vocal_changed消息中未找到mode字段", type: .warning)
+                // 尝试从playing对象中提取所有字段名
+                if let playing = payload?["playing"] as? [String: Any] {
+                    let keys = Array(playing.keys)
+                    addLog("playing对象字段: \(keys)", type: .warning)
+                }
+                if let allKeys = payload?.keys {
+                    addLog("payload字段: \(Array(allKeys))", type: .warning)
+                }
+            }
+        case "sync_full", "now_playing", "queue_updated":
+            // 完整状态快照或播放状态更新
+            addLog("状态同步: \(type)", type: .websocket)
+            // 提取播放状态
+            if let state = payload?["state"] as? String {
+                addLog("播放状态: \(state)")
+                onPlaybackControl?(state)
+            }
+            // 提取当前播放歌曲信息（用于切歌同步）
+            if let playing = payload?["playing"] as? [String: Any],
+               let songDict = playing["song"] as? [String: Any],
+               let songId = songDict["id"] as? Int,
+               let songTitle = songDict["title"] as? String {
+                let songArtist = songDict["artist"] as? String ?? ""
+                addLog("状态同步-当前歌曲: \(songTitle) - \(songArtist) (ID: \(songId))", type: .info)
+                onStateSync?(["songId": songId, "songTitle": songTitle, "songArtist": songArtist])
+            }
+            // 从多个位置提取音轨模式
+            var syncMode: String? = nil
+            if let m = payload?["vocalMode"] as? String {
+                syncMode = m
+            } else if let playing = payload?["playing"] as? [String: Any],
+                      let m = playing["vocalMode"] as? String {
+                syncMode = m
+            }
+            if let mode = syncMode {
+                addLog("音轨模式(同步): \(mode)", type: .info)
+                vocalMode = mode
+                onVocalChanged?(mode)
+            }
+            // 从playing对象中提取状态
+            if let playing = payload?["playing"] as? [String: Any] {
+                if let state = payload?["state"] as? String {
+                    onPlaybackControl?(state)
+                }
+            }
+        case "play", "pause", "player_state", "playback_state", "toggle_playback":
+            let state = payload?["state"] as? String ?? type
+            addLog("播放控制: \(state), type: \(type)", type: .websocket)
+            onPlaybackControl?(state)
+        case "effect", "effect_play", "play_effect", "atmosphere", "ambiance":
+            var effectStr: String?
+            if let e = payload?["effect"] as? String {
+                effectStr = e
+            } else if let e = payload?["type"] as? String {
+                effectStr = e
+            } else if let e = payload?["name"] as? String {
+                effectStr = e
+            } else if let e = payload?["value"] as? String {
+                effectStr = e
+            } else if let e = payload?["effect_id"] as? String {
+                effectStr = e
+            } else if let e = payload?["id"] as? String {
+                effectStr = e
+            }
+            
+            addLog("氛围事件类型: \(type), payload: \(String(describing: payload))", type: .websocket)
+            
+            if let effectStr = effectStr {
+                effectCount += 1
+                addLog("氛围效果 #\(effectCount): \(effectStr)")
+                let effect = KTVEffect(rawValue: effectStr) ?? .unknown
+                currentEffect = effect
+                showEffect = true
+                onEffectChanged?(effect)
+                
+                // 播放音效
+                EffectSoundPlayer.shared.playEffect(effect)
+                
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                    self?.showEffect = false
+                }
+            } else {
+                addLog("氛围效果payload解析失败", type: .warning)
+                effectCount += 1
+                currentEffect = .unknown
+                showEffect = true
+                EffectSoundPlayer.shared.playEffect(.unknown)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                    self?.showEffect = false
+                }
+            }
+        case "volume_changed":
+            // 打印完整payload用于调试
+            if let payloadData = try? JSONSerialization.data(withJSONObject: payload ?? [:], options: .prettyPrinted),
+               let payloadStr = String(data: payloadData, encoding: .utf8) {
+                addLog("volume_changed完整payload: \(payloadStr)", type: .websocket)
+                print("volume_changed完整payload: \(payloadStr)")
+            }
+            
+            // 从多个位置尝试提取音量值
+            var volume: Int? = nil
+            var muted: Bool? = nil
+            
+            // 位置1：payload.volume
+            if let v = payload?["volume"] as? Int {
+                volume = v
+                addLog("从payload.volume获取: \(v)", type: .info)
+            }
+            // 位置2：payload.volume作为字符串
+            else if let vStr = payload?["volume"] as? String, let v = Int(vStr) {
+                volume = v
+                addLog("从payload.volume(字符串)获取: \(v)", type: .info)
+            }
+            // 位置3：payload.playing.volume
+            else if let playing = payload?["playing"] as? [String: Any],
+                    let v = playing["volume"] as? Int {
+                volume = v
+                addLog("从playing.volume获取: \(v)", type: .info)
+            }
+            
+            // 提取静音状态
+            if let m = payload?["muted"] as? Bool {
+                muted = m
+                addLog("从payload.muted获取: \(m)", type: .info)
+            } else if let playing = payload?["playing"] as? [String: Any],
+                      let m = playing["muted"] as? Bool {
+                muted = m
+                addLog("从playing.muted获取: \(m)", type: .info)
+            }
+            
+            // 调用回调
+            if volume != nil || muted != nil {
+                addLog("音量变化: volume=\(volume ?? -1), muted=\(muted ?? false)", type: .info)
+                onVolumeChanged?(volume ?? 50, muted ?? false)
+            } else {
+                addLog("⚠️ volume_changed消息中未找到volume或muted字段", type: .warning)
+                // 打印payload字段名
+                if let keys = payload?.keys {
+                    addLog("payload字段: \(Array(keys))", type: .warning)
+                }
+            }
+        case "playback_restarted":
+            addLog("播放重启")
+            onPlaybackRestarted?()
+        default:
+            addLog("未处理: \(type)", type: .warning)
+            break
+        }
+    }
+    
+    private func startPing() {
+        stopPing()
+        pingTimer = Timer.scheduledTimer(withTimeInterval: 25, repeats: true) { [weak self] _ in
+            self?.sendPing()
+        }
+    }
+    
+    private func stopPing() {
+        pingTimer?.invalidate()
+        pingTimer = nil
+    }
+    
+    private func sendPing() {
+        let message = ["type": "ping"]
+        if let data = try? JSONSerialization.data(withJSONObject: message),
+           let text = String(data: data, encoding: .utf8) {
+            webSocket?.send(.string(text)) { error in
+                if let error = error {
+                    print("发送ping失败: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    /// 上报播放进度（参考安卓端KtvSocket）
+    func sendProgress(positionMs: Int) {
+        let message: [String: Any] = ["type": "progress", "payload": ["position_ms": positionMs]]
+        if let data = try? JSONSerialization.data(withJSONObject: message),
+           let text = String(data: data, encoding: .utf8) {
+            webSocket?.send(.string(text)) { _ in }
+        }
+    }
+    
+    /// 通知播放结束
+    func sendFinished() {
+        let message = ["type": "finished"]
+        if let data = try? JSONSerialization.data(withJSONObject: message),
+           let text = String(data: data, encoding: .utf8) {
+            webSocket?.send(.string(text)) { _ in }
+        }
+    }
+    
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        DispatchQueue.main.async {
+            self.isConnected = true
+            self.addLog("WebSocket已连接")
+        }
+    }
+    
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        DispatchQueue.main.async {
+            self.isConnected = false
+            self.addLog("WebSocket已断开")
+        }
+    }
+}
+
+// MARK: - 应用音轨模式（原唱/伴唱）全局函数
+
+// MARK: - VLC播放器视图
+struct VLCVideoView: UIViewRepresentable {
+    let url: URL?
+    let songId: Int?
+    let vocalMode: String  // "original" 或 "accompaniment"
+    let onLog: ((String, DebugLogEntry.LogType) -> Void)?
+    let onPlayerReady: ((VLCMediaPlayer) -> Void)?  // 播放器就绪回调
+    let onPlaying: (() -> Void)?   // 开始播放
+    let onEnded: (() -> Void)?     // 播放结束
+    let onError: (() -> Void)?     // 播放错误
+    
+    func makeUIView(context: Context) -> UIView {
+        let containerView = UIView()
+        containerView.backgroundColor = .black
+        containerView.contentMode = .scaleAspectFill
+        containerView.clipsToBounds = true
+        // 不设置translatesAutoresizingMaskIntoConstraints = false，让SwiftUI自动管理布局
+        containerView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        
+        let player = VLCMediaPlayer()
+        player.drawable = containerView
+        
+        // 设置delegate和回调
+        context.coordinator.player = player
+        context.coordinator.onPlaying = onPlaying
+        context.coordinator.onEnded = onEnded
+        context.coordinator.onError = onError
+        context.coordinator.onLog = onLog
+        player.delegate = context.coordinator
+        
+        // 通知播放器就绪
+        onPlayerReady?(player)
+        print("VLCVideoView.makeUIView - 已调用onPlayerReady")
+        
+        if let url = url {
+            let media = VLCMedia(url: url)
+            player.media = media
+            player.play()
+            onLog?("开始播放: \(url.lastPathComponent)", .info)
+        }
+        
+        context.coordinator.lastURL = url
+        context.coordinator.lastSongId = songId
+        context.coordinator.lastVocalMode = vocalMode
+        return containerView
+    }
+    
+    func updateUIView(_ uiView: UIView, context: Context) {
+        guard let player = context.coordinator.player else { return }
+        
+        // 确保drawable视图在屏幕旋转时正确调整大小
+        if let drawable = player.drawable as? UIView, drawable !== uiView {
+            player.drawable = uiView
+        }
+        
+        // 确保视图填充整个父视图（横屏全屏显示关键）
+        if let superview = uiView.superview {
+            uiView.frame = superview.bounds
+            uiView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        }
+        
+        uiView.setNeedsLayout()
+        uiView.layoutIfNeeded()
+        
+        // 确保视图填充整个父视图（横屏修复关键）
+        if let superview = uiView.superview {
+            NSLayoutConstraint.activate([
+                uiView.topAnchor.constraint(equalTo: superview.topAnchor),
+                uiView.bottomAnchor.constraint(equalTo: superview.bottomAnchor),
+                uiView.leadingAnchor.constraint(equalTo: superview.leadingAnchor),
+                uiView.trailingAnchor.constraint(equalTo: superview.trailingAnchor)
+            ])
+        }
+        
+        uiView.setNeedsLayout()
+        uiView.layoutIfNeeded()
+        
+        // 关键：只要URL变化，就切换到新视频（不依赖songId，避免更新顺序问题）
+        if let newURL = url, context.coordinator.lastURL != newURL {
+            onLog?("🔄 URL变化，切换视频: \(newURL.lastPathComponent)", .info)
+            context.coordinator.lastURL = newURL
+            if let songId = songId {
+                context.coordinator.lastSongId = songId
+            }
+            
+            // 停止旧播放
+            player.stop()
+            onLog?("⏹️ 停止旧播放", .info)
+            
+            // 延迟0.2秒确保完全停止，然后清除media并播放新视频
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                player.media = nil  // 清除旧的media
+                onLog?("🗑️ 清除旧media", .info)
+                
+                // 再延迟0.1秒，然后创建新media并播放
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    let media = VLCMedia(url: newURL)
+                    player.media = media
+                    player.play()
+                    onLog?("▶️ 开始新播放: \(newURL.lastPathComponent)", .info)
+                    
+                    // 验证播放状态
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        if player.isPlaying {
+                            onLog?("✅ 新视频播放中", .info)
+                        } else {
+                            onLog?("⚠️ 新视频未播放，重试", .warning)
+                            player.play()
+                        }
+                    }
+                }
+            }
+        } else if url == nil && context.coordinator.lastURL != nil {
+            // URL变为nil，停止播放
+            onLog?("⏹️ URL变为nil，停止播放", .info)
+            context.coordinator.lastURL = nil
+            player.stop()
+            player.media = nil
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
+    class Coordinator: NSObject, VLCMediaPlayerDelegate {
+        var player: VLCMediaPlayer?
+        var lastURL: URL?
+        var lastSongId: Int?
+        var lastVocalMode: String = "accompaniment"
+        var onPlaying: (() -> Void)?
+        var onEnded: (() -> Void)?
+        var onError: (() -> Void)?
+        var onLog: ((String, DebugLogEntry.LogType) -> Void)?
+        
+        func mediaPlayerStateChanged(_ aNotification: Notification) {
+            guard let player = player else { return }
+            switch player.state {
+            case .playing:
+                onLog?("▶️ VLC播放中", .info)
+                onPlaying?()
+            case .ended:
+                onLog?("⏹️ VLC播放结束", .info)
+                onEnded?()
+            case .error:
+                onLog?("❌ VLC播放错误", .error)
+                onError?()
+            default:
+                break
+            }
+        }
+    }
+}
+
+// MARK: - 播放管理器
+class PlayerManager: ObservableObject {
+    @Published var currentSong: KTVSong?
+    @Published var showIdleScreen = true
+    @Published var videoURL: URL?
+    @Published var vocalMode: String = "accompaniment"
+    @Published var debugLogs: [DebugLogEntry] = []
+    @Published var isPlaying: Bool = false
+    @Published var currentVolume: Int = 50
+    @Published var showVolumeIndicator: Bool = false
+    
+    let wsManager = WebSocketManager()
+    private var timer: Timer?
+    private var host: String = ""
+    private var port: Int = 8980
+    var vlcPlayer: VLCMediaPlayer?  // VLC播放器引用，直接控制播放/暂停/音轨（strong，确保不被释放）
+    private var songFileIdCache: [Int: Int] = [:]  // songId -> fileId缓存
+    private var progressTimer: Timer?  // 进度上报定时器
+    
+    private func addLog(_ message: String, type: DebugLogEntry.LogType = .info) {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        let time = formatter.string(from: Date())
+        let entry = DebugLogEntry(time: time, message: message, type: type)
+        DispatchQueue.main.async {
+            self.debugLogs.insert(entry, at: 0)
+            if self.debugLogs.count > 30 {
+                self.debugLogs.removeLast()
+            }
+        }
+    }
+    
+    // 直接控制VLC播放器播放
+    func play() {
+        print("PlayerManager.play() 被调用, vlcPlayer是否为nil: \(vlcPlayer == nil)")
+        addLog("执行播放, VLC就绪: \(vlcPlayer != nil)", type: .info)
+        guard let player = vlcPlayer else {
+            addLog("错误: VLC播放器未就绪", type: .error)
+            return
+        }
+        player.play()
+        isPlaying = true
+        addLog("✅ 播放已执行", type: .info)
+    }
+    
+    // 直接控制VLC播放器暂停
+    func pause() {
+        print("PlayerManager.pause() 被调用, vlcPlayer是否为nil: \(vlcPlayer == nil)")
+        addLog("执行暂停, VLC就绪: \(vlcPlayer != nil)", type: .info)
+        guard let player = vlcPlayer else {
+            addLog("错误: VLC播放器未就绪", type: .error)
+            return
+        }
+        player.pause()
+        isPlaying = false
+        addLog("✅ 暂停已执行", type: .info)
+    }
+    
+    // 切换播放/暂停
+    func togglePlayback() {
+        if vlcPlayer?.isPlaying == true {
+            pause()
+        } else {
+            play()
+        }
+    }
+    
+    // MARK: - 音量控制
+    func setVolume(_ volume: Int32) {
+        guard let player = vlcPlayer else {
+            addLog("❌ VLC播放器未就绪，无法设置音量", type: .error)
+            return
+        }
+        
+        let safeVolume = max(0, min(100, volume))
+        currentVolume = Int(safeVolume)
+        showVolumeIndicator = true
+        // 2秒后隐藏音量指示器
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.showVolumeIndicator = false
+        }
+        addLog("🔊 设置音量: \(safeVolume)", type: .info)
+        
+        // 方法1：通过audio对象设置volume（有responds(to:)检查）
+        if player.responds(to: Selector(("audio"))) {
+            if let audio = player.value(forKey: "audio") as? NSObject {
+                if audio.responds(to: Selector(("setVolume:"))) {
+                    audio.setValue(safeVolume, forKey: "volume")
+                    addLog("✅ 方法1: audio.volume = \(safeVolume)", type: .info)
+                } else {
+                    addLog("⚠️ 方法1: audio没有setVolume方法", type: .warning)
+                }
+            }
+        }
+        
+        // 方法2：直接设置player.volume（有responds(to:)检查）
+        if player.responds(to: Selector(("setVolume:"))) {
+            player.setValue(safeVolume, forKey: "volume")
+            addLog("✅ 方法2: player.volume = \(safeVolume)", type: .info)
+        } else {
+            addLog("⚠️ 方法2: player没有setVolume方法", type: .warning)
+        }
+    }
+    
+    func setMuted(_ muted: Bool) {
+        guard let player = vlcPlayer else {
+            addLog("❌ VLC播放器未就绪，无法设置静音", type: .error)
+            return
+        }
+        
+        showVolumeIndicator = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.showVolumeIndicator = false
+        }
+        addLog("🔇 设置静音: \(muted)", type: .info)
+        
+        // 方法1：通过audio对象设置muted（有responds(to:)检查）
+        if player.responds(to: Selector(("audio"))) {
+            if let audio = player.value(forKey: "audio") as? NSObject {
+                if audio.responds(to: Selector(("setMuted:"))) {
+                    audio.setValue(muted, forKey: "muted")
+                    addLog("✅ 方法1: audio.muted = \(muted)", type: .info)
+                } else {
+                    addLog("⚠️ 方法1: audio没有setMuted方法", type: .warning)
+                }
+            }
+        }
+        
+        // 方法2：直接设置player.muted（有responds(to:)检查）
+        if player.responds(to: Selector(("setMuted:"))) {
+            player.setValue(muted, forKey: "muted")
+            addLog("✅ 方法2: player.muted = \(muted)", type: .info)
+        } else {
+            addLog("⚠️ 方法2: player没有setMuted方法", type: .warning)
+        }
+    }
+    
+    // 直接切换音轨（原唱/伴唱）- 尝试多种VLC API
+    func switchVocalMode(_ mode: String) {
+        vocalMode = mode
+        print("========== switchVocalMode被调用（完整音轨切换）==========")
+        print("mode: \(mode)")
+        addLog("🔊 switchVocalMode被调用: \(mode)", type: .info)
+        
+        guard let player = vlcPlayer else {
+            addLog("❌ VLC播放器未就绪", type: .error)
+            return
+        }
+        
+        // 关键：可用音轨是 ["Disable", "Track 1", "Track 2"]
+        // 索引0=Disable(禁用), 索引1=Track 1, 索引2=Track 2
+        let targetIndex: Int32 = (mode == "original") ? 1 : 2
+        addLog("🎯 目标音轨索引: \(targetIndex) (0=Disable,1=Track1,2=Track2)", type: .info)
+        
+        // 只读取audioTrackNames（已验证安全，不读取audioTrackIndex会闪退）
+        if let trackNames = player.value(forKey: "audioTrackNames") as? [String] {
+            addLog("📋 可用音轨: \(trackNames)", type: .info)
+            print("可用音轨: \(trackNames)")
+        }
+        
+        // 方法1：通过audio对象设置trackNumber（有responds(to:)检查）
+        // 注意：不读取audio对象，直接尝试设置
+        if player.responds(to: Selector(("audio"))) {
+            if let audio = player.value(forKey: "audio") as? NSObject {
+                if audio.responds(to: Selector(("setTrackNumber:"))) {
+                    audio.setValue(targetIndex, forKey: "trackNumber")
+                    addLog("✅ 方法1: audio.trackNumber = \(targetIndex)", type: .info)
+                } else {
+                    addLog("⚠️ 方法1: audio没有setTrackNumber方法", type: .warning)
+                }
+            }
+        }
+        
+        // 方法2：设置audioTrackIndex（有responds(to:)检查）
+        if player.responds(to: Selector(("setAudioTrackIndex:"))) {
+            player.setValue(targetIndex, forKey: "audioTrackIndex")
+            addLog("✅ 方法2: audioTrackIndex = \(targetIndex)", type: .info)
+        } else {
+            addLog("⚠️ 方法2: player没有setAudioTrackIndex方法", type: .warning)
+        }
+        
+        // 方法3：设置currentAudioTrackIndex（有responds(to:)检查）
+        if player.responds(to: Selector(("setCurrentAudioTrackIndex:"))) {
+            player.setValue(targetIndex, forKey: "currentAudioTrackIndex")
+            addLog("✅ 方法3: currentAudioTrackIndex = \(targetIndex)", type: .info)
+        } else {
+            addLog("⚠️ 方法3: player没有setCurrentAudioTrackIndex方法", type: .warning)
+        }
+        
+        // 不验证（读取audioTrackIndex会闪退），直接尝试交换索引作为备用
+        // 延迟0.8秒后，如果用户反馈没变化，可以手动触发交换
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            guard let self = self, let player = self.vlcPlayer else { return }
+            // 不读取当前索引（会闪退），直接记录日志
+            self.addLog("⏱️ 音轨切换完成（未验证，读取audioTrackIndex会闪退）", type: .info)
+        }
+    }
+    
+    // 保留原方法的占位，后续逐步恢复
+    func configure(host: String, port: Int) {
+        self.host = host
+        self.port = port
+        addLog("📋 configure被调用: http://\(host):\(port)", type: .info)
+        addLog("设置onVocalChanged回调", type: .info)
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.wsManager.connect(host: host, port: port)
+        }
+        
+        wsManager.onStateSync = { [weak self] state in
+            guard let self = self else { return }
+            if let songId = state["songId"] as? Int,
+               let songTitle = state["songTitle"] as? String {
+                if self.currentSong?.id != songId {
+                    let songArtist = state["songArtist"] as? String ?? ""
+                    self.addLog("🔄 切歌: \(songTitle) (songId=\(songId))", type: .info)
+                    self.currentSong = KTVSong(id: songId, title: songTitle, artist: songArtist)
+                    self.showIdleScreen = false
+                    // 先拉取file_id再播放（参考安卓端）
+                    self.fetchSongDetail(songId: songId) { fileId in
+                        self.videoURL = URL(string: "http://\(self.host):\(self.port)/api/stream/\(fileId)")
+                        self.addLog("📺 播放: fileId=\(fileId)", type: .info)
+                    }
+                }
+            }
+        }
+        
+        wsManager.onVocalChanged = { [weak self] mode in
+            print("onVocalChanged回调被调用: \(mode)")
+            self?.addLog("📞 onVocalChanged回调: \(mode)", type: .info)
+            DispatchQueue.main.async {
+                self?.switchVocalMode(mode)
+            }
+        }
+        wsManager.onEffectChanged = { _ in }
+        wsManager.onPlaybackControl = { [weak self] command in
+            DispatchQueue.main.async {
+                print("收到播放控制命令: \(command)")
+                self?.addLog("收到播放控制: \(command)", type: .info)
+                // 处理多种状态格式：play/playing, pause/paused, toggle
+                if command == "play" || command == "playing" {
+                    self?.play()
+                } else if command == "pause" || command == "paused" {
+                    self?.pause()
+                } else if command == "toggle" {
+                    self?.togglePlayback()
+                } else if command == "idle" {
+                    // 空闲状态，停止播放
+                    self?.currentSong = nil
+                    self?.videoURL = nil
+                    self?.showIdleScreen = true
+                }
+            }
+        }
+        wsManager.onVolumeChanged = { [weak self] (volume: Int, muted: Bool) in
+            print("onVolumeChanged回调被调用: volume=\(volume), muted=\(muted)")
+            self?.addLog("📞 onVolumeChanged回调: volume=\(volume), muted=\(muted)", type: .info)
+            DispatchQueue.main.async {
+                self?.setVolume(Int32(volume))
+                self?.setMuted(muted)
+            }
+        }
+        
+        wsManager.onPlaybackRestarted = { [weak self] in
+            guard let self = self, let song = self.currentSong else { return }
+            self.addLog("播放重启: \(song.title)", type: .info)
+            self.fetchSongDetail(songId: song.id) { fileId in
+                self.videoURL = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.videoURL = URL(string: "http://\(self.host):\(self.port)/api/stream/\(fileId)")
+                }
+            }
+        }
+        
+        startPolling()
+    }
+    
+    func startPolling() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            self?.fetchQueue()
+        }
+        fetchQueue()
+    }
+    
+    func stopPolling() {
+        timer?.invalidate()
+        timer = nil
+        wsManager.disconnect()
+    }
+    
+    // MARK: - 进度上报
+    func startProgressReporting() {
+        stopProgressReporting()
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self, let player = self.vlcPlayer, player.isPlaying else { return }
+            // VLC的time是VLCTime，取毫秒值
+            if let ms = player.time.value as? Int32 {
+                self.wsManager.sendProgress(positionMs: Int(ms))
+            }
+        }
+    }
+    
+    func stopProgressReporting() {
+        progressTimer?.invalidate()
+        progressTimer = nil
+    }
+    
+    /// 拉取歌曲详情获取file_id（参考安卓端）
+    func fetchSongDetail(songId: Int, completion: @escaping (Int) -> Void) {
+        if let cached = songFileIdCache[songId] {
+            completion(cached)
+            return
+        }
+        guard let url = URL(string: "http://\(host):\(port)/api/songs/\(songId)") else {
+            completion(songId)
+            return
+        }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            guard let self = self, let data = data, error == nil else {
+                DispatchQueue.main.async { completion(songId) }
+                return
+            }
+            do {
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let files = json["files"] as? [[String: Any]], !files.isEmpty {
+                    var bestFile: [String: Any]?
+                    var bestPriority = Int.min
+                    for f in files {
+                        let p = f["priority"] as? Int ?? 0
+                        if p > bestPriority { bestPriority = p; bestFile = f }
+                    }
+                    if let fid = bestFile?["id"] as? Int {
+                        self.songFileIdCache[songId] = fid
+                        DispatchQueue.main.async { completion(fid) }
+                        return
+                    }
+                }
+            } catch {}
+            DispatchQueue.main.async { completion(songId) }
+        }.resume()
+    }
+    
+    func fetchQueue() {
+        guard let url = URL(string: "http://\(host):\(port)/api/queue") else { return }
+        
+        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+            guard let data = data, error == nil else { return }
+            
+            do {
+                let queue = try JSONDecoder().decode(KTVQueue.self, from: data)
+                DispatchQueue.main.async {
+                    if let mode = queue.vocalMode, self?.vocalMode == "accompaniment" {
+                        self?.vocalMode = mode
+                    }
+                    
+                    if let playing = queue.playing {
+                        if self?.currentSong?.id != playing.song.id {
+                            self?.addLog("🔄 队列新歌: \(playing.song.title) (songId=\(playing.song.id))", type: .info)
+                            self?.currentSong = playing.song
+                            self?.showIdleScreen = false
+                            // 先拉取file_id再播放
+                            self?.fetchSongDetail(songId: playing.song.id) { fileId in
+                                self?.videoURL = URL(string: "http://\(self?.host ?? ""):\(self?.port ?? 8980)/api/stream/\(fileId)")
+                                self?.addLog("📺 队列播放: fileId=\(fileId)", type: .info)
+                            }
+                        }
+                        self?.showIdleScreen = false
+                    } else {
+                        if self?.currentSong != nil {
+                            self?.addLog("播放队列为空", type: .info)
+                            self?.currentSong = nil
+                            self?.videoURL = nil
+                        }
+                        self?.showIdleScreen = true
+                    }
+                }
+            } catch {
+                self?.addLog("队列解析失败: \(error.localizedDescription)", type: .error)
+            }
+        }.resume()
+    }
+}
+
+// MARK: - 氛围效果覆盖层（鼓掌中间大图标，喝彩满屏动画刷过）
+struct EffectOverlayView: View {
+    let effect: KTVEffect
+    let show: Bool
+    let count: Int
+    
+    @State private var animate = false
+    @State private var pulse = false
+    @State private var particles: [Particle] = []
+    
+    struct Particle: Identifiable {
+        let id = UUID()
+        let x: CGFloat
+        let y: CGFloat
+        let size: CGFloat
+        let opacity: Double
+        let delay: Double
+    }
+    
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                if show {
+                    // 根据效果类型显示不同的动画
+                    switch effect {
+                    case .applause, .clap:
+                        // 鼓掌：中间大图标显示
+                        VStack(spacing: 20) {
+                            Spacer()
+                            
+                            Image(systemName: effect.iconName)
+                                .font(.system(size: 120))
+                                .foregroundColor(effect.color)
+                                .shadow(color: effect.color, radius: 20)
+                                .scaleEffect(pulse ? 1.3 : 0.9)
+                                .rotationEffect(.degrees(animate ? 15 : -15))
+                                .animation(
+                                    Animation.easeInOut(duration: 0.5)
+                                        .repeatForever(autoreverses: true),
+                                    value: animate
+                                )
+                                .animation(
+                                    Animation.spring(response: 0.4, dampingFraction: 0.4)
+                                        .repeatForever(autoreverses: true),
+                                    value: pulse
+                                )
+                            
+                            Text(effect.displayName)
+                                .font(.system(size: 48, weight: .bold))
+                                .foregroundColor(.white)
+                                .shadow(color: effect.color, radius: 10)
+                                .shadow(color: .black, radius: 3)
+                                .scaleEffect(pulse ? 1.15 : 1.0)
+                                .animation(
+                                    Animation.spring(response: 0.3, dampingFraction: 0.5)
+                                        .repeatForever(autoreverses: true),
+                                    value: pulse
+                                )
+                            
+                            Text("第 \(count) 次")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundColor(.white.opacity(0.9))
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 8)
+                                .background(
+                                    Capsule()
+                                        .fill(effect.color.opacity(0.3))
+                                )
+                            
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.black.opacity(0.3))
+                        .transition(.opacity)
+                        
+                    case .cheer:
+                        // 喝彩：满屏动画刷过（粒子效果）
+                        ZStack {
+                            // 半透明背景
+                            Color.black.opacity(0.2)
+                            
+                            // 粒子效果 - 从左到右刷过
+                            ForEach(particles) { particle in
+                                Image(systemName: "star.fill")
+                                    .font(.system(size: particle.size))
+                                    .foregroundColor(effect.color)
+                                    .opacity(particle.opacity)
+                                    .position(x: particle.x, y: particle.y)
+                                    .offset(x: animate ? geometry.size.width + 100 : -100)
+                                    .animation(
+                                        Animation.linear(duration: 1.5)
+                                            .delay(particle.delay)
+                                            .repeatForever(autoreverses: false),
+                                        value: animate
+                                    )
+                            }
+                            
+                            // 中间文字
+                            VStack(spacing: 15) {
+                                Text("🎉")
+                                    .font(.system(size: 80))
+                                
+                                Text(effect.displayName)
+                                    .font(.system(size: 48, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .shadow(color: effect.color, radius: 10)
+                                    .shadow(color: .black, radius: 3)
+                                
+                                Text("第 \(count) 次")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(.white.opacity(0.9))
+                            }
+                        }
+                        .transition(.opacity)
+                        
+                    case .boo, .hiss:
+                        // 倒彩：中间显示，红色调
+                        VStack(spacing: 20) {
+                            Spacer()
+                            
+                            Image(systemName: effect.iconName)
+                                .font(.system(size: 100))
+                                .foregroundColor(.red)
+                                .shadow(color: .red, radius: 15)
+                                .scaleEffect(pulse ? 1.2 : 0.9)
+                                .animation(
+                                    Animation.spring(response: 0.4, dampingFraction: 0.4)
+                                        .repeatForever(autoreverses: true),
+                                    value: pulse
+                                )
+                            
+                            Text(effect.displayName)
+                                .font(.system(size: 40, weight: .bold))
+                                .foregroundColor(.white)
+                                .shadow(color: .red, radius: 8)
+                            
+                            Text("第 \(count) 次")
+                                .font(.system(size: 18))
+                                .foregroundColor(.white.opacity(0.8))
+                            
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.black.opacity(0.4))
+                        .transition(.opacity)
+                        
+                    case .cheers, .toast:
+                        // 干杯：中间显示，橙色调，碰杯动画
+                        VStack(spacing: 20) {
+                            Spacer()
+                            
+                            HStack(spacing: -20) {
+                                Image(systemName: "wineglass.fill")
+                                    .font(.system(size: 80))
+                                    .foregroundColor(.orange)
+                                    .rotationEffect(.degrees(animate ? -20 : -10))
+                                    .offset(x: animate ? 10 : 0)
+                                
+                                Image(systemName: "wineglass.fill")
+                                    .font(.system(size: 80))
+                                    .foregroundColor(.yellow)
+                                    .rotationEffect(.degrees(animate ? 20 : 10))
+                                    .offset(x: animate ? -10 : 0)
+                            }
+                            .animation(
+                                Animation.easeInOut(duration: 0.5)
+                                    .repeatForever(autoreverses: true),
+                                value: animate
+                            )
+                            .shadow(color: .orange, radius: 15)
+                            
+                            Text(effect.displayName)
+                                .font(.system(size: 44, weight: .bold))
+                                .foregroundColor(.white)
+                                .shadow(color: .orange, radius: 10)
+                            
+                            Text("第 \(count) 次")
+                                .font(.system(size: 18))
+                                .foregroundColor(.white.opacity(0.8))
+                            
+                            Spacer()
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color.black.opacity(0.35))
+                        .transition(.opacity)
+                        
+                    case .unknown:
+                        // 未知：右上角小提示
+                        VStack {
+                            HStack {
+                                Spacer()
+                                HStack(spacing: 10) {
+                                    Image(systemName: effect.iconName)
+                                        .font(.system(size: 28))
+                                        .foregroundColor(.white)
+                                    Text(effect.displayName)
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundColor(.white)
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(Color.black.opacity(0.6))
+                                .cornerRadius(15)
+                                .padding(.trailing, 20)
+                                .padding(.top, 60)
+                            }
+                            Spacer()
+                        }
+                    }
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .onAppear {
+                animate = true
+                pulse = true
+                createParticles(in: geometry.size)
+            }
+            .onDisappear {
+                animate = false
+                pulse = false
+            }
+        }
+        .allowsHitTesting(false)
+        .animation(.easeInOut(duration: 0.3), value: show)
+    }
+    
+    private func createParticles(in size: CGSize) {
+        particles = (0..<20).map { i in
+            Particle(
+                x: CGFloat.random(in: -50...size.width),
+                y: CGFloat.random(in: 0...size.height),
+                size: CGFloat.random(in: 15...40),
+                opacity: Double.random(in: 0.4...0.9),
+                delay: Double(i) * 0.08
+            )
+        }
+    }
+}
+
+// MARK: - 调试信息面板
+// MARK: - 扫码提示页面（适配横屏）
+// MARK: - 主播放视图

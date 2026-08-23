@@ -2,87 +2,60 @@ name: tvOS Build IPA
 
 on:
   push:
-    branches: [master, main]
+    branches: [ master, main ]
     paths:
       - 'tvos/**'
       - '.github/workflows/tvos-build.yml'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build-tvos:
-    name: Build tvOS IPA
+  build:
     runs-on: macos-latest
-    defaults:
-      run:
-        working-directory: tvos
-
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
-
-      - name: Generate Xcode Project
-        run: xcodegen generate
-
-      - name: Show Xcode version
-        run: xcodebuild -version
-
-      - name: Build for tvOS (Release)
-        run: |
-          xcodebuild \
-            -project HomeKTV.xcodeproj \
-            -scheme HomeKTV \
-            -configuration Release \
-            -destination 'generic/platform=tvOS' \
-            -archivePath build/HomeKTV.xcarchive \
-            archive \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
-
-      - name: Export IPA (unsigned)
-        run: |
-          mkdir -p build/Payload
-          cp -R build/HomeKTV.xcarchive/Products/Applications/HomeKTV.app build/Payload/
-          cd build
-          zip -r HomeKTV-tvOS.ipa Payload
-          ls -la HomeKTV-tvOS.ipa
-
-      - name: Upload IPA artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: HomeKTV-tvOS-ipa
-          path: tvos/build/HomeKTV-tvOS.ipa
-          retention-days: 30
-
-      - name: Create Release
-        if: github.event_name == 'workflow_dispatch'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: tvos-v1.0.0-${{ github.run_number }}
-          name: tvOS v1.0.0 Build ${{ github.run_number }}
-          body: |
-            ## 家庭KTV tvOS 客户端
-
-            可侧载的Apple TV应用，使用WKWebView包装H5点歌页面。
-
-            ### 功能
-            - 局域网服务端自动配置
-            - 全屏点歌页面
-            - tvOS遥控器支持
-            - 长按设置键进入配置
-
-            ### 侧载方法
-            1. 使用 [AltStore](https://altstore.io/) 或 [Sideloadly](https://sideloadly.io/)
-            2. 导入IPA文件
-            3. 使用Apple ID签名（免费账户7天过期）
-            4. 安装到Apple TV
-
-            ### 配置
-            首次启动后，长按遥控器设置键1.5秒进入配置页面，输入服务端地址（如 `192.168.1.100:8080`）。
-          files: tvos/build/HomeKTV-tvOS.ipa
+    - uses: actions/checkout@v4
+    
+    - name: Install XcodeGen
+      run: brew install xcodegen
+    
+    - name: Install CocoaPods
+      run: |
+        gem install cocoapods
+        pod setup
+    
+    - name: Generate Xcode project
+      working-directory: tvos
+      run: xcodegen generate
+    
+    - name: Install dependencies
+      working-directory: tvos
+      run: pod install --repo-update
+    
+    - name: Build app
+      working-directory: tvos
+      run: |
+        xcodebuild -workspace HomeKTVTV.xcworkspace \
+          -scheme HomeKTVTV \
+          -configuration Release \
+          -sdk appletvos \
+          -archivePath $PWD/build/HomeKTVTV.xcarchive \
+          archive \
+          CODE_SIGN_IDENTITY="" \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGNING_ALLOWED=NO
+    
+    - name: Package IPA
+      working-directory: tvos
+      run: |
+        mkdir -p build/Payload
+        cp -R build/HomeKTVTV.xcarchive/Products/Applications/HomeKTVTV.app build/Payload/
+        cd build
+        zip -r HomeKTV-tvOS.ipa Payload
+        ls -la HomeKTV-tvOS.ipa
+    
+    - name: Upload IPA
+      uses: actions/upload-artifact@v4
+      with:
+        name: HomeKTV-tvOS-ipa
+        path: tvos/build/HomeKTV-tvOS.ipa
+        retention-days: 30

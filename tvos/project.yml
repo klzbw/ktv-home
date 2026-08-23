@@ -1,4 +1,4 @@
-name: HomeKTV
+name: HomeKTVTV
 options:
   bundleIdPrefix: com.homektv
   deploymentTarget:
@@ -14,17 +14,18 @@ settings:
     TVOS_DEPLOYMENT_TARGET: "15.0"
     ONLY_ACTIVE_ARCH: NO
 targets:
-  HomeKTV:
+  HomeKTVTV:
     type: application
     platform: tvOS
     sources:
-      - path: HomeKTV
+      - path: HomeKTVTV
     settings:
       base:
-        PRODUCT_NAME: HomeKTV
+        PRODUCT_NAME: HomeKTVTV
         PRODUCT_BUNDLE_IDENTIFIER: com.homektv.tvos
-        INFOPLIST_FILE: HomeKTV/Info.plist
+        INFOPLIST_FILE: HomeKTVTV/Info.plist
         CODE_SIGN_IDENTITY: "Apple Development"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
         PROVISIONING_PROFILE_SPECIFIER: ""
+        GENERATE_INFOPLIST_FILE: NO

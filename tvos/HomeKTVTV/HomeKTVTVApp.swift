@@ -1,10 +1,10 @@
 import SwiftUI
 
 @main
-struct HomeKTVApp: App {
+struct HomeKTVTVApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            TVHomeView()
         }
     }
 }
