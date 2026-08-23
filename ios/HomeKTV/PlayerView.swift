@@ -1375,6 +1375,8 @@ struct PlayerView: View {
     var body: some View {
         ZStack {
             // VLC播放器（最底层）
+            Color.black.ignoresSafeArea()
+            
             VLCVideoView(
                 url: playerManager.videoURL,
                 songId: playerManager.currentSong?.id,
@@ -1399,6 +1401,8 @@ struct PlayerView: View {
                 }
             )
             .ignoresSafeArea()
+            .navigationBarHidden(true)
+            .navigationBarTitleDisplayMode(.inline)
             
             // 扫码提示页面（中间层）
             if playerManager.showIdleScreen {

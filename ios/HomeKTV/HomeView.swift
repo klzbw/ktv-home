@@ -13,11 +13,13 @@ struct HomeView: View {
                     .navigationBarItems(leading: Button("断开") {
                         deviceManager.disconnect()
                     })
+                    .navigationBarHidden(true)
             } else {
                 deviceListView
                     .navigationTitle("家庭KTV")
             }
         }
+        .navigationViewStyle(StackNavigationViewStyle())
         .sheet(isPresented: $showManualInput) {
             ManualInputView(showManualInput: $showManualInput, manualHost: $manualHost, manualPort: $manualPort, deviceManager: deviceManager)
         }
