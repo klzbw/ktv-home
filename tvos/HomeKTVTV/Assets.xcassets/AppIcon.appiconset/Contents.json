@@ -3,22 +3,26 @@
     {
       "filename" : "AppIcon-1280x768.png",
       "idiom" : "tv",
-      "scale" : "2x"
+      "scale" : "2x",
+      "size" : "640x384"
     },
     {
       "filename" : "AppIcon-640x384.png",
       "idiom" : "tv",
-      "scale" : "1x"
+      "scale" : "1x",
+      "size" : "640x384"
     },
     {
       "filename" : "AppIcon-400x240.png",
       "idiom" : "tv-marketing",
-      "scale" : "2x"
+      "scale" : "2x",
+      "size" : "200x120"
     },
     {
       "filename" : "AppIcon-200x120.png",
       "idiom" : "tv-marketing",
-      "scale" : "1x"
+      "scale" : "1x",
+      "size" : "200x120"
     }
   ],
   "info" : {
