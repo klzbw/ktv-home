@@ -42,16 +42,16 @@ struct TVPlayerView: View {
             
             // 等待扫码页面
             if playerManager.showIdleScreen {
-                TVIdleView(wsManager: playerManager.wsManager)
+                TVIdleView(playerManager: playerManager)
             }
-
-            // 播放时迷你二维码（右下角，参考安卓端 imgMiniQr）
+            
+            // 播放时迷你二维码（右上角）
             if !playerManager.showIdleScreen, let url = playerManager.pointSongUrl {
                 MiniQrOverlayView(urlString: url)
                     .zIndex(40)
                     .transition(.opacity)
             }
-
+            
             // 氛围效果
             if let effect = playerManager.wsManager.currentEffect {
                 EffectOverlayView(
@@ -65,38 +65,80 @@ struct TVPlayerView: View {
     }
 }
 
-// MARK: - tvOS等待页面（显示连接地址）
+// MARK: - tvOS等待页面（显示扫码点歌二维码）
 struct TVIdleView: View {
-    @ObservedObject var wsManager: WebSocketManager
+    @ObservedObject var playerManager: PlayerManager
+    @State private var qrImage: UIImage?
     
     var body: some View {
         VStack(spacing: 30) {
-            Image(systemName: "qrcode")
-                .font(.system(size: 60))
-                .foregroundColor(.white.opacity(0.6))
-            
-            Text("等待点歌")
-                .font(.system(size: 36, weight: .medium))
+            Text("扫码点歌")
+                .font(.system(size: 48, weight: .bold))
                 .foregroundColor(.white)
             
-            Circle()
-                .fill(wsManager.isConnected ? Color.green : Color.red)
-                .frame(width: 12, height: 12)
+            if let qrImage = qrImage, let url = playerManager.pointSongUrl {
+                Image(uiImage: qrImage)
+                    .interpolation(.none)
+                    .resizable()
+                    .frame(width: 280, height: 280)
+                    .padding(12)
+                    .background(Color.white)
+                    .cornerRadius(12)
+                
+                Text(url)
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundColor(.white.opacity(0.8))
+            } else {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.2))
+                    .frame(width: 304, height: 304)
+                    .overlay(
+                        VStack(spacing: 16) {
+                            Image(systemName: "qrcode")
+                                .font(.system(size: 60))
+                                .foregroundColor(.white.opacity(0.6))
+                            ProgressView()
+                        }
+                    )
+            }
             
-            Text(wsManager.isConnected ? "遥控已连接" : "等待遥控连接...")
-                .font(.title3)
-                .foregroundColor(.white.opacity(0.7))
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(playerManager.wsManager.isConnected ? Color.green : Color.red)
+                    .frame(width: 12, height: 12)
+                Text(playerManager.wsManager.isConnected ? "服务已就绪" : "等待连接...")
+                    .font(.title3)
+                    .foregroundColor(.white.opacity(0.7))
+            }
+        }
+        .onAppear { generateQRCode() }
+    }
+    
+    func generateQRCode() {
+        guard let urlString = playerManager.pointSongUrl else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let data = urlString.data(using: .ascii)
+            guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return }
+            filter.setValue(data, forKey: "inputMessage")
+            filter.setValue("M", forKey: "inputCorrectionLevel")
+            guard let outputImage = filter.outputImage else { return }
+            let scale = 280 / outputImage.extent.width
+            let transformedImage = outputImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            let context = CIContext()
+            if let cgImage = context.createCGImage(transformedImage, from: transformedImage.extent) {
+                DispatchQueue.main.async {
+                    self.qrImage = UIImage(cgImage: cgImage)
+                }
+            }
         }
     }
 }
 
-// MARK: - 播放时迷你二维码（右下角，参考安卓端 imgMiniQr）
-/// 视频播放期间在右下角显示的小型扫码点歌二维码，
-/// 对应安卓端 activity_main.xml 中的 imgMiniQr（104dp，白底+扫码点歌标签）。
+// MARK: - 播放时迷你二维码（右上角）
 struct MiniQrOverlayView: View {
     let urlString: String
     @State private var qrImage: UIImage?
-
+    
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -116,14 +158,12 @@ struct MiniQrOverlayView: View {
                             .frame(width: 108, height: 108)
                             .overlay(ProgressView().scaleEffect(0.7))
                     }
-
                     Text("扫码点歌")
                         .font(.system(size: 13, weight: .bold))
                         .foregroundColor(.white)
                         .shadow(color: Color.black.opacity(0.85), radius: 3, x: 1, y: 1)
                 }
                 .padding(.trailing, 32)
-                // 顶部留出安全区空间
                 .padding(.top, 100)
             }
             Spacer()
@@ -131,22 +171,16 @@ struct MiniQrOverlayView: View {
         .allowsHitTesting(false)
         .onAppear { generateQRCode() }
     }
-
-    /// 使用 CoreImage 生成点歌地址二维码。
+    
     func generateQRCode() {
         DispatchQueue.global(qos: .userInitiated).async {
             let data = urlString.data(using: .ascii)
             guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return }
             filter.setValue(data, forKey: "inputMessage")
-            // 安卓端服务端使用 ErrorCorrectionLevel.M，此处保持一致
             filter.setValue("M", forKey: "inputCorrectionLevel")
-
             guard let outputImage = filter.outputImage else { return }
             let scale = 100 / outputImage.extent.width
-            let transformedImage = outputImage.transformed(
-                by: CGAffineTransform(scaleX: scale, y: scale)
-            )
-
+            let transformedImage = outputImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
             let context = CIContext()
             if let cgImage = context.createCGImage(transformedImage, from: transformedImage.extent) {
                 DispatchQueue.main.async {
