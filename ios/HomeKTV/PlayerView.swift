@@ -548,25 +548,31 @@ struct VLCVideoView: UIViewRepresentable {
                 context.coordinator.lastSongId = songId
             }
             
-            // 彻底重置VLC播放器状态
+            // 停止旧播放
             player.stop()
-            player.media = nil  // 先清除旧的media
-            onLog?("⏹️ 停止旧播放并清除media", .info)
+            onLog?("⏹️ 停止旧播放", .info)
             
-            // 立即创建新media并播放（不延迟，避免状态异常）
-            let media = VLCMedia(url: newURL)
-            player.media = media
-            player.play()
-            onLog?("▶️ 开始新播放: \(newURL.lastPathComponent)", .info)
-            
-            // 验证播放状态
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                if player.isPlaying {
-                    onLog?("✅ 新视频播放中", .info)
-                } else {
-                    onLog?("⚠️ 新视频未播放，重试", .warning)
-                    // 重试一次
+            // 延迟0.2秒确保完全停止，然后清除media并播放新视频
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                player.media = nil  // 清除旧的media
+                onLog?("🗑️ 清除旧media", .info)
+                
+                // 再延迟0.1秒，然后创建新media并播放
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    let media = VLCMedia(url: newURL)
+                    player.media = media
                     player.play()
+                    onLog?("▶️ 开始新播放: \(newURL.lastPathComponent)", .info)
+                    
+                    // 验证播放状态
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        if player.isPlaying {
+                            onLog?("✅ 新视频播放中", .info)
+                        } else {
+                            onLog?("⚠️ 新视频未播放，重试", .warning)
+                            player.play()
+                        }
+                    }
                 }
             }
         } else if url == nil && context.coordinator.lastURL != nil {
