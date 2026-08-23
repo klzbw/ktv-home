@@ -6,6 +6,9 @@
   "layers": [
     {
       "filename": "Back.imagestacklayer"
+    },
+    {
+      "filename": "Front.imagestacklayer"
     }
   ]
 }
