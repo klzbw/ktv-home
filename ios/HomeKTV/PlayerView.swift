@@ -1546,10 +1546,26 @@ struct PlayerView: View {
                     }
                 },
                 onPlayerReady: { player in
-                    // 将VLC播放器引用传递给PlayerManager，用于直接控制播放/暂停/音轨
-                    print("PlayerView.onPlayerReady - 被调用")
                     self.playerManager.vlcPlayer = player
-                    print("PlayerView.onPlayerReady - 已设置playerManager.vlcPlayer")
+                },
+                onPlaying: {
+                    DispatchQueue.main.async {
+                        self.playerManager.isPlaying = true
+                        self.playerManager.startProgressReporting()
+                    }
+                },
+                onEnded: {
+                    DispatchQueue.main.async {
+                        self.playerManager.isPlaying = false
+                        self.playerManager.stopProgressReporting()
+                        self.playerManager.wsManager.sendFinished()
+                    }
+                },
+                onError: {
+                    DispatchQueue.main.async {
+                        self.playerManager.isPlaying = false
+                        self.playerManager.stopProgressReporting()
+                    }
                 }
             )
             .ignoresSafeArea()
