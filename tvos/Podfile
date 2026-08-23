@@ -2,5 +2,5 @@ platform :tvos, '15.0'
 use_frameworks!
 
 target 'HomeKTVTV' do
-  pod 'MobileVLCKit-TVOS'
+  pod 'TVVLCKit'
 end

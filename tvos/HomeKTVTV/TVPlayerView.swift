@@ -1,5 +1,5 @@
 import SwiftUI
-import MobileVLCKit
+import TVVLCKit
 
 // MARK: - tvOS播放视图
 struct TVPlayerView: View {

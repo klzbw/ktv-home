@@ -1,5 +1,5 @@
 import SwiftUI
-import MobileVLCKit
+import TVVLCKit
 import AVFoundation
 import Combine
 
