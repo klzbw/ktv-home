@@ -8,6 +8,19 @@
     <string>家庭KTV</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIcons</key>
+    <dict>
+        <key>CFBundlePrimaryIcon</key>
+        <dict>
+            <key>CFBundleIconFiles</key>
+            <array>
+                <string>AppIcon-1280x768</string>
+                <string>AppIcon-640x384</string>
+                <string>AppIcon-400x240</string>
+                <string>AppIcon-200x120</string>
+            </array>
+        </dict>
+    </dict>
     <key>CFBundleIdentifier</key>
     <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
     <key>CFBundleInfoDictionaryVersion</key>
