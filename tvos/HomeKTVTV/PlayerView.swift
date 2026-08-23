@@ -659,6 +659,11 @@ class PlayerManager: ObservableObject {
     private var timer: Timer?
     private var host: String = ""
     private var port: Int = 8980
+    /// H5 点歌地址，供播放界面迷你二维码使用（格式：http://<host>:<port>/m）
+    var pointSongUrl: String? {
+        guard !host.isEmpty else { return nil }
+        return "http://\(host):\(port)/m"
+    }
     var vlcPlayer: VLCMediaPlayer?  // VLC播放器引用，直接控制播放/暂停/音轨（strong，确保不被释放）
     private var songFileIdCache: [Int: Int] = [:]  // songId -> fileId缓存
     private var progressTimer: Timer?  // 进度上报定时器
