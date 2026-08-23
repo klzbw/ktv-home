@@ -455,6 +455,24 @@ class WebSocketManager: NSObject, ObservableObject, URLSessionWebSocketDelegate 
         }
     }
     
+    /// 上报播放进度（参考安卓端KtvSocket）
+    func sendProgress(positionMs: Int) {
+        let message: [String: Any] = ["type": "progress", "payload": ["position_ms": positionMs]]
+        if let data = try? JSONSerialization.data(withJSONObject: message),
+           let text = String(data: data, encoding: .utf8) {
+            webSocket?.send(.string(text)) { _ in }
+        }
+    }
+    
+    /// 通知播放结束
+    func sendFinished() {
+        let message = ["type": "finished"]
+        if let data = try? JSONSerialization.data(withJSONObject: message),
+           let text = String(data: data, encoding: .utf8) {
+            webSocket?.send(.string(text)) { _ in }
+        }
+    }
+    
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
         DispatchQueue.main.async {
             self.isConnected = true
@@ -479,6 +497,9 @@ struct VLCVideoView: UIViewRepresentable {
     let vocalMode: String  // "original" 或 "accompaniment"
     let onLog: ((String, DebugLogEntry.LogType) -> Void)?
     let onPlayerReady: ((VLCMediaPlayer) -> Void)?  // 播放器就绪回调
+    let onPlaying: (() -> Void)?   // 开始播放
+    let onEnded: (() -> Void)?     // 播放结束
+    let onError: (() -> Void)?     // 播放错误
     
     func makeUIView(context: Context) -> UIView {
         let containerView = UIView()
@@ -491,8 +512,15 @@ struct VLCVideoView: UIViewRepresentable {
         let player = VLCMediaPlayer()
         player.drawable = containerView
         
+        // 设置delegate和回调
+        context.coordinator.player = player
+        context.coordinator.onPlaying = onPlaying
+        context.coordinator.onEnded = onEnded
+        context.coordinator.onError = onError
+        context.coordinator.onLog = onLog
+        player.delegate = context.coordinator
+        
         // 通知播放器就绪
-        print("VLCVideoView.makeUIView - onPlayerReady闭包是否为nil: \(onPlayerReady == nil)")
         onPlayerReady?(player)
         print("VLCVideoView.makeUIView - 已调用onPlayerReady")
         
@@ -503,7 +531,6 @@ struct VLCVideoView: UIViewRepresentable {
             onLog?("开始播放: \(url.lastPathComponent)", .info)
         }
         
-        context.coordinator.player = player
         context.coordinator.lastURL = url
         context.coordinator.lastSongId = songId
         context.coordinator.lastVocalMode = vocalMode
@@ -588,11 +615,32 @@ struct VLCVideoView: UIViewRepresentable {
         Coordinator()
     }
     
-    class Coordinator: NSObject {
+    class Coordinator: NSObject, VLCMediaPlayerDelegate {
         var player: VLCMediaPlayer?
         var lastURL: URL?
         var lastSongId: Int?
         var lastVocalMode: String = "accompaniment"
+        var onPlaying: (() -> Void)?
+        var onEnded: (() -> Void)?
+        var onError: (() -> Void)?
+        var onLog: ((String, DebugLogEntry.LogType) -> Void)?
+        
+        func mediaPlayerStateChanged(_ aNotification: Notification) {
+            guard let player = player else { return }
+            switch player.state {
+            case .playing:
+                onLog?("▶️ VLC播放中", .info)
+                onPlaying?()
+            case .ended:
+                onLog?("⏹️ VLC播放结束", .info)
+                onEnded?()
+            case .error:
+                onLog?("❌ VLC播放错误", .error)
+                onError?()
+            default:
+                break
+            }
+        }
     }
 }
 
@@ -885,6 +933,23 @@ class PlayerManager: ObservableObject {
         timer?.invalidate()
         timer = nil
         wsManager.disconnect()
+    }
+    
+    // MARK: - 进度上报
+    func startProgressReporting() {
+        stopProgressReporting()
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            guard let self = self, let player = self.vlcPlayer, player.isPlaying else { return }
+            // VLC的time是VLCTime，取毫秒值
+            if let ms = player.time.value as? Int32 {
+                self.wsManager.sendProgress(positionMs: Int(ms))
+            }
+        }
+    }
+    
+    func stopProgressReporting() {
+        progressTimer?.invalidate()
+        progressTimer = nil
     }
     
     /// 拉取歌曲详情获取file_id（参考安卓端）
