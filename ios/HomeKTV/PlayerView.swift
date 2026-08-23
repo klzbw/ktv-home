@@ -548,22 +548,33 @@ struct VLCVideoView: UIViewRepresentable {
                 context.coordinator.lastSongId = songId
             }
             
-            // 停止旧播放
+            // 彻底重置VLC播放器状态
             player.stop()
-            onLog?("⏹️ 停止旧播放", .info)
+            player.media = nil  // 先清除旧的media
+            onLog?("⏹️ 停止旧播放并清除media", .info)
             
-            // 延迟0.3秒后开始新播放，确保VLC完全停止
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                let media = VLCMedia(url: newURL)
-                player.media = media
-                player.play()
-                onLog?("▶️ 开始新播放: \(newURL.lastPathComponent)", .info)
+            // 立即创建新media并播放（不延迟，避免状态异常）
+            let media = VLCMedia(url: newURL)
+            player.media = media
+            player.play()
+            onLog?("▶️ 开始新播放: \(newURL.lastPathComponent)", .info)
+            
+            // 验证播放状态
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                if player.isPlaying {
+                    onLog?("✅ 新视频播放中", .info)
+                } else {
+                    onLog?("⚠️ 新视频未播放，重试", .warning)
+                    // 重试一次
+                    player.play()
+                }
             }
         } else if url == nil && context.coordinator.lastURL != nil {
             // URL变为nil，停止播放
             onLog?("⏹️ URL变为nil，停止播放", .info)
             context.coordinator.lastURL = nil
             player.stop()
+            player.media = nil
         }
     }
     
