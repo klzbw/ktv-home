@@ -1,12 +1,12 @@
 {
   "images": [
     {
-      "filename": "AppIcon-back-464.png",
+      "filename": "topshelf-400x240.png",
       "idiom": "tv",
       "scale": "1x"
     },
     {
-      "filename": "AppIcon-back-928.png",
+      "filename": "topshelf-800x480.png",
       "idiom": "tv",
       "scale": "2x"
     }
