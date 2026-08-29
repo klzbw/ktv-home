@@ -1,16 +1,14 @@
 {
   "images": [
     {
-      "filename": "large_front@1x.png",
+      "filename": "front_large.png",
       "idiom": "tv",
-      "scale": "1x",
-      "size": "640x384"
+      "scale": "1x"
     },
     {
-      "filename": "large_front@2x.png",
+      "filename": "front_large_2x.png",
       "idiom": "tv",
-      "scale": "2x",
-      "size": "640x384"
+      "scale": "2x"
     }
   ],
   "info": {

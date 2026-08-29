@@ -1,16 +1,14 @@
 {
   "images": [
     {
-      "filename": "topshelf@1x.png",
+      "filename": "topshelf_std.png",
       "idiom": "tv",
-      "scale": "1x",
-      "size": "1920x720"
+      "scale": "1x"
     },
     {
-      "filename": "topshelf@2x.png",
+      "filename": "topshelf_std_2x.png",
       "idiom": "tv",
-      "scale": "2x",
-      "size": "1920x720"
+      "scale": "2x"
     }
   ],
   "info": {
