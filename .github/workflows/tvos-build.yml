@@ -45,13 +45,20 @@ jobs:
           CODE_SIGNING_ALLOWED=NO \
           ASSETCATALOG_COMPILER_APPICON_NAME=AppIcon
     
-    - name: Copy icon files to app bundle
+    - name: Verify compiled icon and plist
       working-directory: tvos
       run: |
         APP="build/HomeKTVTV.xcarchive/Products/Applications/HomeKTVTV.app"
-        cp HomeKTVTV/Assets.xcassets/AppIcon.appiconset/AppIcon-*.png "$APP/"
-        echo "=== .app根目录图标文件 ==="
-        ls -la "$APP/"*.png
+        echo "=== .app 目录内容 ==="
+        ls -la "$APP"
+        echo "=== Assets.car（编译后的图标/资源，必须存在）==="
+        ls -la "$APP/Assets.car"
+        echo "=== Info.plist 关键键校验 ==="
+        /usr/libexec/PlistBuddy -c "Print :CFBundleName" "$APP/Info.plist"
+        /usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$APP/Info.plist"
+        /usr/libexec/PlistBuddy -c "Print :TVTopShelfImage" "$APP/Info.plist"
+        echo "=== 确认根目录没有散落 png（旧方式残留检查）==="
+        (ls "$APP"/*.png 2>/dev/null && echo "WARN: 根目录存在散落png" || echo "OK: 无散落png，图标已进Assets.car")
     
     - name: Package IPA
       working-directory: tvos

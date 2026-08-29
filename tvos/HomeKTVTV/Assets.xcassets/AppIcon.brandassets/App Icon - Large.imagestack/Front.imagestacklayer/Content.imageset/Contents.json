@@ -1,0 +1,20 @@
+{
+  "images": [
+    {
+      "filename": "large_front@1x.png",
+      "idiom": "tv",
+      "scale": "1x",
+      "size": "640x384"
+    },
+    {
+      "filename": "large_front@2x.png",
+      "idiom": "tv",
+      "scale": "2x",
+      "size": "640x384"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}
